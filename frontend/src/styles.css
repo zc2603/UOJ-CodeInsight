@@ -331,8 +331,8 @@ input:focus, textarea:focus { border-color: var(--green-700); box-shadow: 0 0 0 
 .question-count { color: var(--muted); font-size: 10px; }
 .material-details { border-bottom: 1px solid #e5e9e6; }
 .material-details > summary { display: flex; align-items: center; gap: 6px; padding: 10px 22px; background: #fafbfa; }
-.review-material { display: grid; grid-template-columns: minmax(300px, 42%) minmax(420px, 58%); max-height: 520px; border-top: 1px solid #e5e9e6; }
-.review-material .statement { overflow: auto; padding: 20px; border-right: 1px solid var(--line); }
+.review-material { display: grid; grid-template-columns: minmax(300px, 42%) minmax(420px, 58%); grid-template-rows: minmax(0, 1fr); height: clamp(240px, 55vh, 520px); overflow: hidden; border-top: 1px solid #e5e9e6; }
+.review-material .statement { min-width: 0; min-height: 0; overflow-wrap: anywhere; overflow: auto; padding: 20px; border-right: 1px solid var(--line); }
 .source-card { min-height: 220px; overflow: auto; background: var(--code); color: #d7ded9; }
 .question-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .question-detail { min-width: 0; padding: 20px 22px 24px; }
@@ -545,3 +545,6 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .action-menu[open] > div > button { flex:none; width:100%; white-space:nowrap; }
 .action-menu[open] > div > .delete-quiz { color:#b13b35; border-top:1px solid var(--line); border-radius:0 0 5px 5px; margin-top:4px; padding-top:11px; }
 .action-menu[open] > div > .delete-quiz:hover { background:#fff1ef; }
+
+.review-material > .source-card { min-width: 0; min-height: 0; }
+.review-material .source-wrap, .review-material .source-code { min-height: 0; }

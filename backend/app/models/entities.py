@@ -55,6 +55,9 @@ class AttemptStatus(str, enum.Enum):
 class QuestionType(str, enum.Enum):
     EXPLANATION = "explanation"
     TRACE = "trace"
+    BOUNDARY = "boundary"
+    MODIFICATION = "modification"
+    # Read-only compatibility for historical questions whose subtype is unknown.
     BOUNDARY_OR_MODIFICATION = "boundary_or_modification"
 
 
@@ -182,6 +185,7 @@ class Attempt(Base):
     auto_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     manual_override_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     manual_override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     participant: Mapped[QuizParticipant] = relationship(back_populates="attempts")
@@ -233,6 +237,9 @@ class Answer(Base):
     grader_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     grader_prompt_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     grader_raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    question_validity: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     question: Mapped[Question] = relationship(back_populates="answer")
 
@@ -277,7 +284,7 @@ class GenerationJob(Base):
     result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    prompt_version: Mapped[str] = mapped_column(String(50), default="question_generator_v4")
+    prompt_version: Mapped[str] = mapped_column(String(50), default="question_generator_v10")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -289,6 +296,6 @@ class GenerationRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     state: Mapped[str] = mapped_column(String(20), default="running")
     model: Mapped[str] = mapped_column(String(100))
-    prompt_version: Mapped[str] = mapped_column(String(50), default="question_generator_v4")
+    prompt_version: Mapped[str] = mapped_column(String(50), default="question_generator_v10")
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

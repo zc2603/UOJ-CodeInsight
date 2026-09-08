@@ -24,6 +24,8 @@ function formatRemaining(seconds: number | null) {
 function questionTypeLabel(type: string | null | undefined) {
   if (type === "explanation") return "代码理解";
   if (type === "trace") return "执行追踪";
+  if (type === "boundary") return "边界分析";
+  if (type === "modification") return "代码修改";
   if (type === "boundary_or_modification") return "边界与修改";
   return "当前问题";
 }

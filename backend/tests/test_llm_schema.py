@@ -95,6 +95,7 @@ async def test_provider_enables_max_thinking_without_temperature() -> None:
                                         {
                                             "index": 2,
                                             "type": "trace",
+                                            "second_kind": "trace",
                                             "question": "q2",
                                             "question_en": "q2",
                                             "reference_answer": "a2",
@@ -151,10 +152,12 @@ def test_whitespace_normalization_preserves_meaningful_content(text, expected):
     (0, "输出为 1 3，第二个数字错误。", False),
     (2, "有效内容正确，忽略行末空格。", False),
 ])
-async def test_v5_isolates_bad_rubric_and_gates_whitespace_deductions(score, reason, rejected):
+async def test_v6_isolates_bad_rubric_and_gates_whitespace_deductions(score, reason, rejected):
     from app.services.llm_provider import WhitespaceGradingError
     observed = []
-    raw = json.dumps({"grades": [{"question_index": 1, "score": score,
+    raw = json.dumps({"grades": [{"question_index": 1,
+        "validity": "valid", "validity_reason": "输入合法", "objection": "none",
+        "units": [{"criterion": "输出", "expected": "1 2", "verdict": {0: "incorrect", 1: "partial", 2: "correct"}[score]}],
         "reason": reason, "confidence": 0.9}]}, ensure_ascii=False)
     async def handler(request):
         observed.append(json.loads(request.content))
@@ -167,14 +170,10 @@ async def test_v5_isolates_bad_rubric_and_gates_whitespace_deductions(score, rea
         "reference_answer": "poison-reference", "grading_points": ["poison-rubric"],
         "student_answer": "1 2 \r\n\r\n"}])
     try:
-        if rejected:
-            with pytest.raises(WhitespaceGradingError) as exc:
-                await provider.grade_answers(**payload)
-            assert exc.value.raw_response == raw
-        else:
-            result, saved = await provider.grade_answers(**payload)
-            assert result.grades[0].score == score
-            assert saved == raw
+        result, saved = await provider.grade_answers(**payload)
+        assert result.grades[0].score == score
+        assert result.grades[0].review_required == rejected
+        assert saved == raw
     finally:
         await provider.close()
     assert len(observed) == 1  # No extra paid retry for a policy violation.

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Answer, Attempt, AttemptStatus, LLMCallLog, Question, SubmissionSnapshot
-from app.services.llm_provider import LLMProvider
+from app.services.llm_provider import LLMProvider, GRADER_VERSION
 
 
 async def grade_attempt(
@@ -79,7 +79,7 @@ async def grade_attempt(
                 attempt_id=attempt_id,
                 call_type="grading",
                 model=provider.model_name,
-                prompt_version="grader_v5",
+                prompt_version=GRADER_VERSION,
                 success=False,
                 raw_response=getattr(exc, "raw_response", None),
                 error=str(exc),
@@ -109,7 +109,7 @@ async def grade_attempt(
                 attempt_id=attempt_id,
                 call_type="grading",
                 model=provider.model_name,
-                prompt_version="grader_v5",
+                prompt_version=GRADER_VERSION,
                 success=True,
                 raw_response=raw,
             )
@@ -122,9 +122,14 @@ async def grade_attempt(
         answer.grading_reason = grade.reason
         answer.confidence = grade.confidence
         answer.grader_model = provider.model_name
-        answer.grader_prompt_version = "grader_v5"
+        answer.grader_prompt_version = GRADER_VERSION
         answer.grader_raw_response = raw_by_index[question.question_index]
+        answer.review_required = grade.review_required
+        answer.review_reason = grade.review_reason
+        answer.question_validity = grade.question_validity
     locked.auto_score = sum(item.score for item in grade_by_index.values())
+    # Regrading cannot silently dismiss an outstanding teacher review.
+    locked.review_required = locked.review_required or any(item.review_required for item in grade_by_index.values())
     locked.status = AttemptStatus.FINISHED
     locked.finished_at = datetime.now(timezone.utc)
     await db.commit()

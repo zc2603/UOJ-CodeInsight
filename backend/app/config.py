@@ -37,13 +37,14 @@ class Settings(BaseSettings):
     llm_provider: str = "mock"
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com"
-    llm_model: str = "deepseek-v4-flash-vision-exp"
+    llm_model: str = "deepseek-v4-pro"
     llm_reasoning_effort: Literal["low", "high", "max"] = "max"
     llm_timeout_seconds: float = 180.0
     llm_max_tokens: int = 12_000
     # This limit is per Uvicorn worker. Four production workers make the
     # default effective process-wide ceiling approximately 20 model calls.
     llm_max_concurrency: int = Field(default=5, ge=1, le=200)
+    grading_review_confidence_threshold: float = Field(default=0.75, ge=0, le=1)
 
     generation_global_concurrency: int = Field(default=20, ge=1, le=100)
     generation_workers: int = Field(default=5, ge=1, le=20)

@@ -11,6 +11,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
 from app.models import GenerationControl, GenerationJob, GenerationRun, Quiz, QuizStatus, SubmissionSnapshot
+from app.services.llm_provider import GENERATOR_VERSION
+from app.services.question_policy import allocated_kind
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 async def enqueue(db, snapshots, round_no=1):
     for snapshot in snapshots:
         db.add(GenerationJob(quiz_id=snapshot.quiz_id, participant_id=snapshot.participant_id,
-            submission_snapshot_id=snapshot.id, round_no=round_no))
+            submission_snapshot_id=snapshot.id, round_no=round_no, prompt_version=GENERATOR_VERSION))
 
 
 def summarize(jobs):
@@ -105,7 +107,8 @@ async def claim(db, settings, model, *, now=None):
     job.lease_token = token
     job.lease_until = now + timedelta(seconds=settings.generation_lease_seconds)
     job.model = model
-    db.add(GenerationRun(id=token, job_id=job.id, model=model))
+    job.prompt_version = GENERATOR_VERSION
+    db.add(GenerationRun(id=token, job_id=job.id, model=model, prompt_version=GENERATOR_VERSION))
     identity = job.id, token, job.submission_snapshot_id
     await db.commit()
     return identity
@@ -159,7 +162,8 @@ async def run_claim(factory, settings, provider, identity):
             snapshot = (await db.execute(select(SubmissionSnapshot).where(SubmissionSnapshot.id == identity[2])
                 .options(selectinload(SubmissionSnapshot.problem)))).scalar_one()
             payload = dict(title=snapshot.problem.title, statement=snapshot.problem.statement,
-                language=snapshot.language, source_code=snapshot.source_code)
+                language=snapshot.language, source_code=snapshot.source_code,
+                second_question_kind=await allocated_kind(db, snapshot))
         return await asyncio.wait_for(provider.generate_questions(**payload), settings.generation_task_timeout_seconds)
 
     generation = asyncio.create_task(generate())

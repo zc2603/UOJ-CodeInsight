@@ -36,7 +36,7 @@ function statusLabel(status: string | null) {
     PUBLISHED: "开放中", ACTIVE: "学生作答中", DRAFT: "未开放", CLOSED: "已关闭",
     READY: "未开始", NO_ELIGIBLE_SUBMISSION: "无有效提交",
     PREPARING: "生成问题中", IN_PROGRESS: "作答中", GRADING: "评分中",
-    FINISHED: "已完成", EXPIRED: "已超时", RESET: "已重置", GRADING_ERROR: "评分异常",
+    REVIEW_REQUIRED: "待教师复核", FINISHED: "已完成", EXPIRED: "已超时", RESET: "已重置", GRADING_ERROR: "评分异常",
   };
   const normalized = status?.toUpperCase() || "";
   return normalized ? labels[normalized] || status! : "未开始";
@@ -53,6 +53,7 @@ function formatDate(value: string) {
 }
 
 function resultBucket(result: ResultRow) {
+  if (result.review_required) return "attention";
   const status = (result.attempt_status || result.participant_status || "").toUpperCase();
   if (status === "FINISHED") return "finished";
   if (["PREPARING", "IN_PROGRESS", "GRADING"].includes(status)) return "active";
@@ -352,7 +353,7 @@ export function AdminApp() {
     try {
       const detail = await api<AttemptDetail>(`/api/admin/attempts/${attemptId}`);
       setAttempt(detail);
-      setOverrideScore(detail.manual_override_score ?? detail.auto_score ?? 0);
+      setOverrideScore((detail.review_required ? detail.auto_score : detail.manual_override_score ?? detail.auto_score) ?? 0);
       setOverrideReason(detail.manual_override_reason ?? "");
       setView("attempt");
     } catch (error) {
@@ -566,11 +567,11 @@ export function AdminApp() {
           </header>
           <section className="result-overview">
             <div><Users size={18} /><span>学生总数<strong>{results.length}</strong></span></div>
-            <div><Check size={18} /><span>已完成<strong>{results.filter(result => result.attempt_status?.toUpperCase() === "FINISHED").length}</strong></span></div>
+            <div><Check size={18} /><span>已完成<strong>{results.filter(result => !result.review_required && result.attempt_status?.toUpperCase() === "FINISHED").length}</strong></span></div>
             <div><BarChart3 size={18} /><span>已评分平均分<strong>{(() => { const values = results.flatMap(result => result.final_percent === null ? [] : [result.final_percent]); return values.length ? `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)}%` : "—"; })()}</strong></span></div>
           </section>
           <section className="card table-card result-card">
-            {results.length ? <><div className="result-toolbar"><label><Search size={15} /><input aria-label="搜索学号" value={resultQuery} onChange={event => setResultQuery(event.target.value)} placeholder="搜索学号" /></label><div className="filter-tabs" role="group" aria-label="筛选作答状态"><button className={resultFilter === "all" ? "active" : ""} onClick={() => setResultFilter("all")}>全部</button><button className={resultFilter === "finished" ? "active" : ""} onClick={() => setResultFilter("finished")}>已完成</button><button className={resultFilter === "active" ? "active" : ""} onClick={() => setResultFilter("active")}>进行中</button><button className={resultFilter === "pending" ? "active" : ""} onClick={() => setResultFilter("pending")}>未作答</button><button className={resultFilter === "attention" ? "active" : ""} onClick={() => setResultFilter("attention")}>需关注</button></div><span>{filteredResults.length} / {results.length} 人</span></div>{filteredResults.length ? <table className="result-table"><thead><tr><th>学号</th><th>覆盖题目</th><th>问题数</th><th>原始分</th><th>百分制</th><th>置信度</th><th>状态</th><th></th></tr></thead><tbody>{filteredResults.map(result => <tr key={result.student_number}><td className="mono student-number">{result.student_number}</td><td>{result.problem_count}</td><td>{result.question_count}</td><td><strong>{result.final_score ?? "—"}{result.max_score ? ` / ${result.max_score}` : ""}</strong>{result.manual_score !== null && <small>人工覆盖</small>}</td><td><strong className="percent-score">{result.final_percent !== null ? `${result.final_percent.toFixed(1)}%` : "—"}</strong></td><td>{result.confidence?.toFixed(2) ?? "—"}</td><td><span className={`status-pill status-${statusClass(result.attempt_status || result.participant_status)}`}>{statusLabel(result.attempt_status || result.participant_status)}</span></td><td>{result.attempt_id && <button className="link" disabled={busy} onClick={() => void loadAttempt(result.attempt_id!)}>查看详情</button>}{(!result.attempt_id || result.attempt_status === "RESET") && result.prepared_problem_count > 0 && <button className="link" disabled={busy} onClick={() => void loadPrepared(result.student_number)}>{result.attempt_id ? "查看新题" : "查看详情"}</button>}</td></tr>)}</tbody></table> : <div className="filtered-empty">没有符合当前条件的学生</div>}</> : <div className="empty-state compact-empty"><div className="empty-symbol"><Users size={25} /></div><h2>暂时没有作答记录</h2><p>学生进入并开始测评后，进度会自动显示在这里。</p></div>}
+            {results.length ? <><div className="result-toolbar"><label><Search size={15} /><input aria-label="搜索学号" value={resultQuery} onChange={event => setResultQuery(event.target.value)} placeholder="搜索学号" /></label><div className="filter-tabs" role="group" aria-label="筛选作答状态"><button className={resultFilter === "all" ? "active" : ""} onClick={() => setResultFilter("all")}>全部</button><button className={resultFilter === "finished" ? "active" : ""} onClick={() => setResultFilter("finished")}>已完成</button><button className={resultFilter === "active" ? "active" : ""} onClick={() => setResultFilter("active")}>进行中</button><button className={resultFilter === "pending" ? "active" : ""} onClick={() => setResultFilter("pending")}>未作答</button><button className={resultFilter === "attention" ? "active" : ""} onClick={() => setResultFilter("attention")}>需关注</button></div><span>{filteredResults.length} / {results.length} 人</span></div>{filteredResults.length ? <table className="result-table"><thead><tr><th>学号</th><th>覆盖题目</th><th>问题数</th><th>原始分</th><th>百分制</th><th>最低置信度</th><th>状态</th><th></th></tr></thead><tbody>{filteredResults.map(result => <tr key={result.student_number}><td className="mono student-number">{result.student_number}</td><td>{result.problem_count}</td><td>{result.question_count}</td><td><strong>{result.final_score ?? "—"}{result.max_score ? ` / ${result.max_score}` : ""}</strong>{result.review_required && <small>建议分 {result.auto_score ?? "—"}</small>}{result.manual_score !== null && <small>人工覆盖</small>}</td><td><strong className="percent-score">{result.final_percent !== null ? `${result.final_percent.toFixed(1)}%` : "—"}</strong></td><td>{result.confidence?.toFixed(2) ?? "—"}</td><td><span className={`status-pill status-${statusClass(result.review_required ? "GRADING_ERROR" : result.attempt_status || result.participant_status)}`}>{statusLabel(result.review_required ? "REVIEW_REQUIRED" : result.attempt_status || result.participant_status)}</span></td><td>{result.attempt_id && <button className="link" disabled={busy} onClick={() => void loadAttempt(result.attempt_id!)}>查看详情</button>}{(!result.attempt_id || result.attempt_status === "RESET") && result.prepared_problem_count > 0 && <button className="link" disabled={busy} onClick={() => void loadPrepared(result.student_number)}>{result.attempt_id ? "查看新题" : "查看详情"}</button>}</td></tr>)}</tbody></table> : <div className="filtered-empty">没有符合当前条件的学生</div>}</> : <div className="empty-state compact-empty"><div className="empty-symbol"><Users size={25} /></div><h2>暂时没有作答记录</h2><p>学生进入并开始测评后，进度会自动显示在这里。</p></div>}
           </section>
         </>}
 
@@ -589,7 +590,7 @@ export function AdminApp() {
 
         {view === "attempt" && attempt && <>
           <header>
-            <div><button className="back" onClick={() => setView("results")}><ArrowLeft size={15} />返回测评结果</button><div className="eyebrow">STUDENT REVIEW</div><h1 className="mono">{attempt.student_number}</h1><p>共 {attemptGroups.length} 道题、{attempt.questions.length} 个问题 · <span className={`status-pill status-${statusClass(attempt.status)}`}>{statusLabel(attempt.status)}</span></p></div>
+            <div><button className="back" onClick={() => setView("results")}><ArrowLeft size={15} />返回测评结果</button><div className="eyebrow">STUDENT REVIEW</div><h1 className="mono">{attempt.student_number}</h1><p>共 {attemptGroups.length} 道题、{attempt.questions.length} 个问题 · <span className={`status-pill status-${statusClass(attempt.review_required ? "GRADING_ERROR" : attempt.status)}`}>{statusLabel(attempt.review_required ? "REVIEW_REQUIRED" : attempt.status)}</span></p></div>
             <div className="header-actions"><button className="secondary" disabled={busy} onClick={regrade}><RefreshCw size={16} />重新评分</button><button className="danger" disabled={busy} onClick={resetAttempt}><RotateCcw size={16} />允许重新作答</button></div>
           </header>
           <section className="detail-grid">
@@ -597,13 +598,14 @@ export function AdminApp() {
               <header><div><span className="problem-number">题目 {group.problem.id}</span><h2>{group.problem.title}</h2></div><span className="question-count">{group.questions.length} 个问题</span></header>
               <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><div className="statement">{group.problem.statement}</div><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
               <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
-                <div className="question-title-row"><div className="question-index">问题 {index + 1}</div><span className="question-score">{question.score ?? "—"} / 2</span></div>
+                <div className="question-title-row"><div className="question-index">问题 {index + 1}</div><span className="question-score">{attempt.review_required ? "建议 " : ""}{question.score ?? "—"} / 2</span></div>
                 <h3>{readableGeneratedQuestion(question.question)}</h3>
+                {question.review_required && <p className="review-notice">{attempt.review_required ? "待教师复核" : "曾触发复核"}：{question.review_reason}</p>}
                 {question.question_en && <p className="question-en">{readableGeneratedQuestion(question.question_en)}</p>}
                 <dl><dt>学生回答</dt><dd className="student-answer">{question.student_answer ?? "尚未回答"}</dd><dt>评分原因</dt><dd>{question.reason ?? "—"}</dd><dt>置信度</dt><dd>{question.confidence?.toFixed(2) ?? "—"}</dd><dt>参考答案</dt><dd>{question.reference_answer}</dd></dl>
               </article>)}</div>
             </section>)}</div>
-            <div className="card override-card"><div className="override-heading"><h2>成绩复核</h2><ShieldCheck size={19} /></div><div className="score compact">{attempt.manual_override_score ?? attempt.auto_score ?? "—"}<small> / {attempt.max_score}</small></div><div className="percent-large">{attempt.final_percent !== null ? `${attempt.final_percent.toFixed(1)}%` : "—"}</div><div className="score-meta"><span>当前百分制</span><span>自动总分 {attempt.auto_score ?? "—"}</span></div><form onSubmit={saveOverride}><label>人工覆盖分数<input type="number" min="0" max={attempt.max_score} value={overrideScore} onChange={event => setOverrideScore(Number(event.target.value))} /></label><label>覆盖原因<textarea required maxLength={5000} value={overrideReason} onChange={event => setOverrideReason(event.target.value)} placeholder="请填写复核依据" /></label><button disabled={busy}>{busy && <LoaderCircle className="spin" size={16} />}保存复核结果</button></form></div>
+            <div className="card override-card"><div className="override-heading"><h2>成绩复核</h2><ShieldCheck size={19} /></div>{attempt.review_required && <p className="review-notice">本次评分待复核，建议分尚未计入最终成绩。请检查题目和评分依据，填写总分与原因后保存；重新评分不会自动解除待复核状态。</p>}<div className="score compact">{(attempt.review_required ? attempt.auto_score : attempt.manual_override_score ?? attempt.auto_score) ?? "—"}<small> / {attempt.max_score}</small></div><div className="percent-large">{attempt.final_percent !== null ? `${attempt.final_percent.toFixed(1)}%` : "—"}</div><div className="score-meta"><span>{attempt.review_required ? "待复核建议分" : "当前百分制"}</span><span>自动总分 {attempt.auto_score ?? "—"}</span></div><form onSubmit={saveOverride}><label>人工覆盖分数<input type="number" min="0" max={attempt.max_score} value={overrideScore} onChange={event => setOverrideScore(Number(event.target.value))} /></label><label>覆盖原因<textarea required maxLength={5000} value={overrideReason} onChange={event => setOverrideReason(event.target.value)} placeholder="请填写复核依据" /></label><button disabled={busy}>{busy && <LoaderCircle className="spin" size={16} />}保存复核结果</button></form></div>
           </section>
         </>}
       </main>

@@ -139,6 +139,7 @@ class ManualOverrideRequest(BaseModel):
 
 
 class ResultRow(BaseModel):
+    review_required: bool = False
     prepared_problem_count: int = 0
     preparation_total: int = 0
     student_number: str

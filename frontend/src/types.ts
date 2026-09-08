@@ -45,6 +45,7 @@ export interface QuizSummary {
 }
 
 export interface ResultRow {
+  review_required: boolean;
   prepared_problem_count: number;
   preparation_total: number;
   student_number: string;
@@ -62,6 +63,9 @@ export interface ResultRow {
 }
 
 export interface AttemptQuestionDetail {
+  review_required?: boolean;
+  review_reason?: string | null;
+  question_validity?: string | null;
   index: number;
   type: string;
   question: string;
@@ -78,6 +82,7 @@ export interface AttemptQuestionDetail {
 }
 
 export interface AttemptDetail {
+  review_required: boolean;
   id: string;
   status: string;
   student_number: string;

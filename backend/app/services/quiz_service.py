@@ -32,7 +32,8 @@ from app.schemas.api import (
 )
 from app.security import generate_quiz_code, hash_secret
 from app.services.import_service import ImportBundle
-from app.services.llm_provider import LLMProvider
+from app.services.llm_provider import LLMProvider, GENERATOR_VERSION
+from app.services.question_policy import allocated_kind
 from app.time_utils import ensure_utc
 from app.schemas.llm import QuestionGenerationResult
 from app.services.generation_service import enqueue
@@ -315,6 +316,7 @@ async def start_attempt(
             )
         ).scalars().all()
     )
+    kinds = {snapshot.id: await allocated_kind(db, snapshot) for snapshot in snapshots}
     # Release the read transaction while waiting for the external provider.
     await db.commit()
     remaining = settings.attempt_preparing_timeout_seconds - (
@@ -328,6 +330,7 @@ async def start_attempt(
                     statement=snapshot.problem.statement,
                     language=snapshot.language,
                     source_code=snapshot.source_code,
+                    second_question_kind=kinds[snapshot.id],
                 )
                 for snapshot in snapshots
             )
@@ -343,7 +346,7 @@ async def start_attempt(
                 attempt_id=attempt.id,
                 call_type="question_generation",
                 model=provider.model_name,
-                prompt_version="question_generator_v4",
+                prompt_version=GENERATOR_VERSION,
                 success=False,
                 error=str(exc),
             )
@@ -375,7 +378,7 @@ async def start_attempt(
                     reference_answer=item.reference_answer,
                     grading_points_json=item.grading_points,
                     generator_model=provider.model_name,
-                    generator_prompt_version="question_generator_v4",
+                    generator_prompt_version=GENERATOR_VERSION,
                     generator_raw_response=raw,
                 )
             )
@@ -384,7 +387,7 @@ async def start_attempt(
                 attempt_id=attempt.id,
                 call_type="question_generation",
                 model=provider.model_name,
-                prompt_version="question_generator_v4",
+                prompt_version=GENERATOR_VERSION,
                 success=True,
                 raw_response=raw,
             )

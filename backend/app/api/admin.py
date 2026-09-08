@@ -186,7 +186,7 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
             for p in quiz.participants
             if p.attempts
         ]
-        finished = [a for a in attempts if a.status == AttemptStatus.FINISHED]
+        finished = [a for a in attempts if a.status == AttemptStatus.FINISHED and not a.review_required]
         scores = [
             a.manual_override_score if a.manual_override_score is not None else a.auto_score
             for a in finished
@@ -293,10 +293,13 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
         auto = attempt.auto_score if attempt else None
         manual = attempt.manual_override_score if attempt else None
         final = manual if manual is not None else auto
+        if attempt and attempt.review_required:
+            final = None
         max_score = len(questions) * 2
         problem_count = len({q.submission_snapshot_id for q in questions})
         rows.append(
             ResultRow(
+                review_required=bool(attempt and attempt.review_required),
                 student_number=participant.student_number,
                 participant_status=participant.status,
                 attempt_id=attempt.id if attempt else None,
@@ -310,7 +313,7 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
                 final_score=final,
                 max_score=max_score,
                 final_percent=(final / max_score * 100 if final is not None and max_score else None),
-                confidence=(sum(confidences) / len(confidences) if confidences else None),
+                confidence=(min(confidences) if confidences else None),
             )
         )
     return rows
@@ -385,8 +388,9 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
         "status": attempt.status,
         "student_number": attempt.participant.student_number,
         "auto_score": attempt.auto_score,
+        "review_required": attempt.review_required,
         "max_score": max_score,
-        "final_percent": final_score / max_score * 100 if final_score is not None and max_score else None,
+        "final_percent": final_score / max_score * 100 if final_score is not None and max_score and not attempt.review_required else None,
         "manual_override_score": attempt.manual_override_score,
         "manual_override_reason": attempt.manual_override_reason,
         "questions": [
@@ -408,6 +412,9 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
                 "score": item.answer.auto_score if item.answer else None,
                 "reason": item.answer.grading_reason if item.answer else None,
                 "confidence": item.answer.confidence if item.answer else None,
+                "review_required": item.answer.review_required if item.answer else False,
+                "review_reason": item.answer.review_reason if item.answer else None,
+                "question_validity": item.answer.question_validity if item.answer else None,
             }
             for item in questions
         ],
@@ -453,6 +460,7 @@ async def override_score(
         )
     attempt.manual_override_score = payload.score
     attempt.manual_override_reason = payload.reason
+    attempt.review_required = False
     await db.commit()
     return {"ok": True, "final_score": payload.score}
 
@@ -473,6 +481,7 @@ async def export_csv(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
             "max_score",
             "final_percent",
             "status",
+            "review_required",
         ]
     )
     for row in rows:
@@ -487,6 +496,7 @@ async def export_csv(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
                 row.max_score,
                 row.final_percent,
                 (row.attempt_status or row.participant_status).value,
+                row.review_required,
             ]
         )
     data = "\ufeff" + output.getvalue()

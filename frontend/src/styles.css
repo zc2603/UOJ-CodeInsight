@@ -548,3 +548,4 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 
 .review-material > .source-card { min-width: 0; min-height: 0; }
 .review-material .source-wrap, .review-material .source-code { min-height: 0; }
+.review-notice { padding: 12px 14px; border: 1px solid #d8bc7b; border-radius: 8px; background: #fff8e8; color: #684b14; line-height: 1.7; }

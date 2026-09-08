@@ -161,6 +161,40 @@ async def test_background_runner_persists_without_any_student_request(db):
     db.expire_all()
     assert (await queue.progress(db, quiz_id))["completed"] == 1
     assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
+    job = await db.get(GenerationJob, identity[0])
+    assert job.prompt_version == "question_generator_v10"
+    assert job.result_json["questions"][1]["second_kind"] in ("trace", "boundary", "modification")
+
+
+@pytest.mark.asyncio
+async def test_kind_allocation_balanced_across_sessions_and_retries(db):
+    from collections import Counter
+    from app.models import QuizParticipant, QuizParticipantStatus
+    from app.services.question_policy import allocated_kind
+    quiz, _ = await prepare_seed(db)
+    originals = (await db.execute(select(SubmissionSnapshot).where(SubmissionSnapshot.quiz_id == quiz.id))).scalars().all()
+    for student in ("synthetic-2", "synthetic-3"):
+        participant = QuizParticipant(quiz_id=quiz.id, student_number=student,
+            eligible_problem_count=2, status=QuizParticipantStatus.READY)
+        db.add(participant)
+        await db.flush()
+        for original in originals:
+            db.add(SubmissionSnapshot(quiz_id=quiz.id, participant_id=participant.id,
+                problem_snapshot_id=original.problem_snapshot_id,
+                uoj_submission_id=original.uoj_submission_id, uoj_problem_id=original.uoj_problem_id,
+                source_code=original.source_code, language=original.language,
+                uoj_score=original.uoj_score, uoj_submit_time=original.uoj_submit_time))
+    await db.commit()
+    snapshots = (await db.execute(select(SubmissionSnapshot).where(SubmissionSnapshot.quiz_id == quiz.id))).scalars().all()
+    before = {s.id: await allocated_kind(db, s) for s in snapshots}
+    assert Counter(before.values()) == {"trace": 2, "boundary": 2, "modification": 2}
+    identity = await queue.claim(db, Settings(), "mock")
+    await queue.finish(db, Settings(), identity, error="synthetic failure")
+    await queue.enqueue(db, snapshots, round_no=2)
+    await db.commit()
+    async with async_sessionmaker(db.bind, expire_on_commit=False)() as reopened:
+        loaded = (await reopened.execute(select(SubmissionSnapshot).where(SubmissionSnapshot.quiz_id == quiz.id))).scalars().all()
+        assert {s.id: await allocated_kind(reopened, s) for s in reversed(loaded)} == before
 
 
 @pytest.mark.asyncio

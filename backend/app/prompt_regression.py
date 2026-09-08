@@ -124,12 +124,7 @@ async def run(output: Path, real: bool):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--confirm-real-cost", action="store_true")
-    args = parser.parse_args()
-    try:
-        asyncio.run(run(args.output, args.confirm_real_cost))
-    except Exception as exc:
-        print(f"regression=failed reason={type(exc).__name__}")
-        raise SystemExit(1)
+    # Retain the legacy v4 functions above for audit. The installed whitelist
+    # entry point now dispatches the explicitly authorized review regression.
+    from app.prompt_pro_regression import main
+    main()

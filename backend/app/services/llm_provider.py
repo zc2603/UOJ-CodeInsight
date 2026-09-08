@@ -7,13 +7,78 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import httpx
-from pydantic import ValidationError
+from pydantic import ValidationError, model_validator
 
 from app.config import Settings
-from app.schemas.llm import GradingResult, QuestionGenerationResult
+from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGenerationResult
 
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
+GENERATOR_VERSION = "question_generator_v10"
+GRADER_VERSION = "grader_v7"
+
+KIND_RULES = {
+    "trace": "给出可在少量步骤内完整追踪的合法小输入，询问一个确定的输出或状态结果。type=trace。",
+    "boundary": "围绕合法输入域或数据结构的一项边界性质，询问一个行为或原因。type=boundary。",
+    "modification": "要求一项范围清楚、规模很小的代码调整，说明预期行为以及应保持不变的条件。type=modification。",
+}
+
+
+def generation_schema(kind, source_code=None):
+    if kind not in KIND_RULES:
+        raise ValueError("Unknown second question kind")
+
+    class AssignedQuestions(QuestionGenerationResult):
+        @model_validator(mode="after")
+        def enforce_kind(self):
+            second = self.questions[1]
+            expected = kind
+            if second.second_kind != kind or second.type.value != expected:
+                raise ValueError("Second question must match the assigned kind")
+            if re.search(r"=\s*\?\s*;|\bTODO\b|\bFIXME\b", second.reference_answer):
+                raise ValueError("Reference answer contains unfinished code")
+            if kind == "modification" and re.search(r"第\s*\d+\s*行|\blines?\s+\d+", second.question + "\n" + second.question_en, re.I):
+                raise ValueError("Modification must locate code by content, not unprovided line numbers")
+            if source_code is not None:
+                headers = {re.sub(r"\s+", "", h) for h in re.findall(r"\bfor\s*\([^()]*\)", source_code)}
+                for question in self.questions:
+                    if question.type.value == "modification":
+                        continue  # Deliberately modified code is allowed in this type.
+                    for body in (question.question, question.question_en):
+                        for header in re.findall(r"\bfor\s*\([^()]*\)", body):
+                            if re.sub(r"\s+", "", header) not in headers:
+                                raise ValueError("Quoted for-loop header differs from actual source")
+            return self
+
+    return AssignedQuestions
+
+
+def score_assessments(assessment, raw, answers, confidence_threshold=0.75):
+    grades = []
+    if {grade.question_index for grade in assessment.grades} != set(answers):
+        raise LLMProviderError("评分题号与提交不一致", raw_response=raw)
+    for grade in assessment.grades:
+        review_reasons = []
+        if grade.validity != "valid":
+            review_reasons.append("题目存在缺陷" if grade.validity == "invalid" else "题目有效性不确定")
+            review_reasons.append(grade.validity_reason)
+        if grade.scoring_uncertain:
+            review_reasons.append("模型无法确定应给分数")
+        if grade.confidence < confidence_threshold:
+            review_reasons.append(f"置信度 {grade.confidence:.2f} 低于复核阈值 {confidence_threshold:.2f}")
+        if grade.validity == "invalid" and grade.objection == "correct":
+            score = 2
+            reason = "准确指出题目实质性缺陷，按规则建议 2 分，待教师复核。" + grade.validity_reason
+        else:
+            verdicts = [unit.verdict for unit in grade.units]
+            score = (2 if all(v == "correct" for v in verdicts) else int(any(v in ("correct", "partial") for v in verdicts))) if verdicts else grade.suggested_score
+            reason = grade.reason
+        if not answers[grade.question_index].strip():
+            score, reason = 0, "未提供答案。"
+        grades.append(dict(question_index=grade.question_index, score=score, reason=reason, confidence=grade.confidence,
+            review_required=bool(review_reasons), review_reason="；".join(review_reasons) or None,
+            question_validity=grade.validity))
+    return GradingResult.model_validate({"grades": grades})
 
 
 def encode_untrusted(value: object) -> str:
@@ -55,7 +120,8 @@ def validate_whitespace_grades(result: GradingResult, raw: str) -> None:
             r"空白|空格|换行|行尾|行末|末尾空行|whitespace|\bspaces?\b|new\s*lines?|line[ -]?(?:break|ending|feed)s?|\bCRLF\b|\bLF\b",
             grade.reason, re.IGNORECASE,
         ):
-            raise WhitespaceGradingError(raw)
+            grade.review_required = True
+            grade.review_reason = (grade.review_reason + "；" if grade.review_reason else "") + "评分理由涉及空白差异，需教师核对建议分"
 
 
 
@@ -64,7 +130,7 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def generate_questions(
-        self, *, title: str, statement: str, language: str, source_code: str
+        self, *, title: str, statement: str, language: str, source_code: str, second_question_kind: str = "trace"
     ) -> tuple[QuestionGenerationResult, str]:
         raise NotImplementedError
 
@@ -85,6 +151,7 @@ class MockLLMProvider(LLMProvider):
     model_name = "mock"
 
     async def generate_questions(self, **_: str) -> tuple[QuestionGenerationResult, str]:
+        kind = _.get("second_question_kind", "trace")
         raw = json.dumps(
             {
                 "questions": [
@@ -98,7 +165,8 @@ class MockLLMProvider(LLMProvider):
                     },
                     {
                         "index": 2,
-                        "type": "trace",
+                        "type": kind,
+                        "second_kind": kind,
                         "question": "给定一个很小的合法输入，这个关键变量最终是什么值？",
                         "question_en": "For a very small valid input, what is the final value of this key variable?",
                         "reference_answer": "最终值必须与当前代码的实际执行结果一致。",
@@ -108,7 +176,7 @@ class MockLLMProvider(LLMProvider):
             },
             ensure_ascii=False,
         )
-        return QuestionGenerationResult.model_validate_json(raw), raw
+        return generation_schema(kind).model_validate_json(raw), raw
 
     async def grade_answers(self, **kwargs: object) -> tuple[GradingResult, str]:
         payload = kwargs["question_payload"]
@@ -184,13 +252,15 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                 schema_failures += 1
                 if schema_failures >= 3:
                     break
-                user_prompt += "\n\n上一次输出未通过 JSON schema 校验。请只返回完整、合法的 JSON。"
+                user_prompt += "\n\n上一次输出未通过结构或类型校验。请遵守指定题型、字段和取值，只返回完整合法的 JSON。"
         raise LLMProviderError(f"LLM response failed validation: {type(last_error).__name__}", raw_response=raw)
 
     async def generate_questions(
-        self, *, title: str, statement: str, language: str, source_code: str
+        self, *, title: str, statement: str, language: str, source_code: str, second_question_kind: str = "trace"
     ) -> tuple[QuestionGenerationResult, str]:
-        system = (PROMPTS / "question_generator_v4.txt").read_text(encoding="utf-8")
+        schema = generation_schema(second_question_kind, source_code)
+        system = (PROMPTS / f"{GENERATOR_VERSION}.txt").read_text(encoding="utf-8")
+        system += f"\n本次第二问 second_kind={second_question_kind}。" + KIND_RULES[second_question_kind]
         user = f"""<PROBLEM>
 标题（JSON 字符串）：{encode_untrusted(title)}
 题面（JSON 字符串）：
@@ -203,9 +273,9 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 {encode_untrusted(source_code)}
 </STUDENT_CODE>
 
-输出对象必须含 questions 数组，严格为两题；每题含 index、type、question、question_en、reference_answer、grading_points。
+输出对象必须含 questions 数组，严格为两题；每题含 index、type、question、question_en、reference_answer、grading_points。第二题额外含 second_kind，值必须为 {second_question_kind}。
 """
-        return await self._request_json(system, user, QuestionGenerationResult)
+        return await self._request_json(system, user, schema)
 
     async def grade_answers(
         self,
@@ -216,7 +286,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         source_code: str,
         question_payload: list[dict[str, object]],
     ) -> tuple[GradingResult, str]:
-        system = (PROMPTS / "grader_v5.txt").read_text(encoding="utf-8")
+        system = (PROMPTS / f"{GRADER_VERSION}.txt").read_text(encoding="utf-8")
         blocks = []
         for item in question_payload:
             blocks.append(
@@ -240,9 +310,11 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 
 {chr(10).join(blocks)}
 
-输出对象必须含 grades 数组，每项只含 question_index、score、reason、confidence。
+输出对象必须含 grades 数组，每项含 question_index、validity、validity_reason、objection、units、reason、confidence。不要返回 score，分数由程序计算。
 """
-        result, raw = await self._request_json(system, user, GradingResult)
+        assessment, raw = await self._request_json(system, user, GradingAssessmentResult)
+        result = score_assessments(assessment, raw, {item['question_index']: str(item['student_answer']) for item in question_payload},
+            self.settings.grading_review_confidence_threshold)
         validate_whitespace_grades(result, raw)
         return result, raw
 

@@ -241,6 +241,7 @@ async def result(
         await db.execute(select(Quiz).where(Quiz.id == principal.quiz_id))
     ).scalar_one()
     finished = attempt.status == AttemptStatus.FINISHED
+    score_ready = finished and not attempt.review_required
     score = (
         attempt.manual_override_score
         if attempt.manual_override_score is not None
@@ -252,7 +253,7 @@ async def result(
     return StudentResultResponse(
         status=attempt.status,
         submitted=finished or attempt.status == AttemptStatus.GRADING_ERROR,
-        score_visible=finished and quiz.show_score_after_finish,
-        total_score=score if finished and quiz.show_score_after_finish else None,
+        score_visible=score_ready and quiz.show_score_after_finish,
+        total_score=score if score_ready and quiz.show_score_after_finish else None,
         max_score=int(question_count or 0) * 2,
     )

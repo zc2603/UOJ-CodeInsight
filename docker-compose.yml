@@ -20,6 +20,8 @@ services:
     image: uoj-quiz-backend:local
     build: ./backend
     env_file: ${APP_ENV_FILE:-.env}
+    environment:
+      LLM_MODEL: deepseek-v4-pro
     command: ["alembic", "upgrade", "head"]
     depends_on:
       postgres:
@@ -31,6 +33,8 @@ services:
     build: ./backend
     restart: unless-stopped
     env_file: ${APP_ENV_FILE:-.env}
+    environment:
+      LLM_MODEL: deepseek-v4-pro
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.integrations.uoj.repository import UOJRepository
+from app.services.llm_provider import GENERATOR_VERSION, GRADER_VERSION
 
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -26,6 +27,7 @@ def check_config() -> int:
     print(f"llm_provider={settings.llm_provider}")
     print(f"llm_model={settings.llm_model}")
     print(f"llm_reasoning_effort={settings.llm_reasoning_effort}")
+    print(f"grading_review_confidence_threshold={settings.grading_review_confidence_threshold}")
     print(f"generation_global_concurrency={settings.generation_global_concurrency}")
     print(f"generation_workers={settings.generation_workers}")
     print(f"generation_task_timeout_seconds={settings.generation_task_timeout_seconds}")
@@ -43,14 +45,14 @@ def check_config() -> int:
 
 def smoke_check() -> int:
     required = (
-        PROMPTS / "question_generator_v4.txt",
-        PROMPTS / "grader_v5.txt",
+        PROMPTS / f"{GENERATOR_VERSION}.txt",
+        PROMPTS / f"{GRADER_VERSION}.txt",
     )
     missing = [item.name for item in required if not item.is_file()]
     if missing:
         print(f"smoke=failed missing={','.join(missing)}")
         return 1
-    print("smoke=ok prompt_version=v4 grader_prompt_version=v5")
+    print(f"smoke=ok prompt_version={GENERATOR_VERSION} grader_prompt_version={GRADER_VERSION}")
     for name in ("main.py", "services/attempt_maintenance.py", "services/quiz_service.py", "services/generation_service.py"):
         path = PROMPTS.parent / name
         print(f"source={name} sha256={hashlib.sha256(path.read_bytes()).hexdigest()}")
@@ -69,7 +71,9 @@ async def check_preparation_schema():
         control = await db.scalar(text("SELECT id FROM generation_control WHERE id = 1"))
         await db.execute(text("SELECT pre_generate FROM quizzes LIMIT 0"))
         counts = (await db.execute(text("SELECT state, COUNT(*) FROM generation_jobs GROUP BY state"))).all()
-        assert revision == "0003_pre_generation" and control == 1
+        await db.execute(text("SELECT review_required FROM attempts LIMIT 0"))
+        await db.execute(text("SELECT review_required, review_reason, question_validity FROM answers LIMIT 0"))
+        assert revision == "0004_grading_review" and control == 1
         print(f"preparation_schema=ok revision={revision}")
         print("preparation_jobs=" + (",".join(f"{state}:{count}" for state, count in counts) or "empty"))
 

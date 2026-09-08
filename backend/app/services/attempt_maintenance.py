@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_, select, update
 
 from app.models import Attempt, AttemptStatus, LLMCallLog
+from app.services.llm_provider import GENERATOR_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ async def reconcile_attempts(db, settings, *, now=None):
         attempt.status = AttemptStatus.RESET
         db.add(LLMCallLog(
             attempt_id=attempt.id, call_type="question_generation",
-            model=settings.llm_model, prompt_version="question_generator_v4",
+            model=settings.llm_model, prompt_version=GENERATOR_VERSION,
             success=False, error="Preparation time limit exceeded; attempt reset by maintenance.",
         ))
     await db.commit()

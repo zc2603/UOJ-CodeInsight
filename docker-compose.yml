@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-uoj_quiz}
+      POSTGRES_USER: ${POSTGRES_USER:-uoj_quiz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - quiz_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: uoj-quiz-backend:local
+    build: ./backend
+    env_file: ${APP_ENV_FILE:-.env}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    image: uoj-quiz-backend:local
+    build: ./backend
+    restart: unless-stopped
+    env_file: ${APP_ENV_FILE:-.env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8090}:8090"
+    depends_on:
+      - backend
+
+volumes:
+  quiz_postgres_data:
+
+networks:
+  default:
+    name: uoj-quiz-net
+    external: true

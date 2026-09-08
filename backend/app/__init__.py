@@ -1,0 +1,1 @@
+"""UOJ AI Quiz backend."""

@@ -1,0 +1,117 @@
+#!/bin/sh
+set -eu
+
+PROJECT_DIR=/opt/uoj-codeinsight
+ENV_FILE=/etc/uoj-quiz/uoj-quiz.env
+BACKUP_DIR=/var/backups/uoj-quiz
+COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
+OFFLINE_FILE="$PROJECT_DIR/docker-compose.offline.yml"
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: uoj-quiz-maintain {health|status|logs|smoke|config|check-deepseek|check-uoj|deploy-backend|deploy-frontend|deploy-all|backup|regression-v4}" >&2
+    exit 2
+fi
+
+if [ ! -r "$ENV_FILE" ]; then
+    echo "maintenance environment file is unavailable" >&2
+    exit 1
+fi
+
+export APP_ENV_FILE="$ENV_FILE"
+
+compose() {
+    docker compose \
+        --project-directory "$PROJECT_DIR" \
+        --env-file "$ENV_FILE" \
+        -f "$COMPOSE_FILE" \
+        -f "$OFFLINE_FILE" \
+        "$@"
+}
+
+wait_for_health() {
+    attempts=0
+    while [ "$attempts" -lt 30 ]; do
+        if curl -fsS http://127.0.0.1:8090/api/health >/dev/null 2>&1; then
+            echo "health=ok"
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    echo "health=failed" >&2
+    return 1
+}
+
+redact_logs() {
+    sed -E \
+        -e 's/(Bearer )[A-Za-z0-9._-]+/\1[REDACTED]/g' \
+        -e 's/(sk-[A-Za-z0-9_-]{8})[A-Za-z0-9_-]+/\1[REDACTED]/g' \
+        -e 's#(://[^:/[:space:]]+:)[^@/[:space:]]+@#\1[REDACTED]@#g'
+}
+
+case "$1" in
+    health)
+        wait_for_health
+        ;;
+    status)
+        compose ps
+        ;;
+    logs)
+        compose logs --no-color --tail=200 backend 2>&1 | redact_logs
+        ;;
+    smoke)
+        compose exec -T backend python -m app.maintenance_checks smoke
+        ;;
+    config)
+        compose exec -T backend python -m app.maintenance_checks config
+        ;;
+    check-deepseek)
+        compose exec -T backend python -m app.maintenance_checks deepseek
+        ;;
+    check-uoj)
+        compose exec -T backend python -m app.maintenance_checks uoj
+        ;;
+    deploy-backend)
+        compose build backend
+        compose up -d backend
+        wait_for_health
+        ;;
+    deploy-frontend)
+        test -s "$PROJECT_DIR/frontend/dist/index.html"
+        compose build frontend
+        compose up -d frontend
+        wait_for_health
+        ;;
+    deploy-all)
+        test -s "$PROJECT_DIR/frontend/dist/index.html"
+        compose build backend frontend
+        compose up -d backend frontend
+        wait_for_health
+        ;;
+    regression-v4)
+        # Billable: operator must first confirm the documented scope and cost.
+        # Isolated SQLite only, no UOJ access or production database writes.
+        target_dir="$PROJECT_DIR/artifacts/prompt-regression"
+        mkdir -p "$target_dir"
+        timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+        compose run --rm --no-deps -v "$target_dir:/regression" backend \
+            python -m app.prompt_regression --output "/regression/$timestamp" --confirm-real-cost
+        ;;
+    backup)
+        install -d -m 700 -o root -g root "$BACKUP_DIR"
+        timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+        target="$BACKUP_DIR/uoj-quiz-$timestamp.dump"
+        umask 077
+        compose exec -T postgres sh -c 'pg_dump --format=custom -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >"$target"
+        if [ ! -s "$target" ]; then
+            rm -f "$target"
+            echo "backup=failed" >&2
+            exit 1
+        fi
+        echo "backup=ok path=$target"
+        ;;
+    *)
+        echo "unsupported maintenance action" >&2
+        exit 2
+        ;;
+esac

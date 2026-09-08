@@ -1,0 +1,1 @@
+quizmaintainer ALL=(root) NOPASSWD: /usr/local/sbin/uoj-quiz-maintain

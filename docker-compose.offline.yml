@@ -1,0 +1,15 @@
+services:
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.offline
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.offline
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.offline

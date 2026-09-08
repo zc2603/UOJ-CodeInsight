@@ -1,0 +1,293 @@
+import asyncio
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import httpx
+import pytest
+from fastapi import HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from test_attempt_flow import db, seed_participant
+from test_import_integration import FakeRepository, FakeArchiveClient, NOW
+from app.config import Settings
+from app.models import Attempt, GenerationControl, GenerationJob, GenerationRun, QuizStatus, Question, SubmissionSnapshot
+from app.services import generation_service as queue
+from app.services.import_service import ImportService
+from app.services.llm_provider import MockLLMProvider
+from app.services.quiz_service import persist_quiz, start_attempt, reset_attempt
+from app.schemas.api import QuizCreateRequest
+from app.time_utils import ensure_utc
+
+
+async def prepare_seed(db):
+    quiz, participant = await seed_participant(db)
+    quiz.pre_generate = True
+    quiz.status = QuizStatus.DRAFT
+    db.add(GenerationControl(id=1))
+    snapshots = (await db.execute(select(SubmissionSnapshot))).scalars().all()
+    await queue.enqueue(db, snapshots)
+    await db.commit()
+    return quiz, participant
+
+
+async def complete_one(db, settings=None):
+    settings = settings or Settings()
+    identity = await queue.claim(db, settings, "mock")
+    assert identity
+    result, raw = await MockLLMProvider().generate_questions()
+    assert await queue.finish(db, settings, identity, result=result, raw=raw)
+    return identity
+
+
+class NoGeneration(MockLLMProvider):
+    async def generate_questions(self, **kwargs):
+        raise AssertionError("Student start must not call LLM")
+
+
+@pytest.mark.asyncio
+async def test_create_atomically_enqueues_only_eligible_submissions(db):
+    bundle = await ImportService(Settings(), FakeRepository(), FakeArchiveClient()).build_bundle(7, NOW - timedelta(hours=12))
+    quiz, _ = await persist_quiz(db, bundle, QuizCreateRequest(contest_id=7))
+    assert quiz.status == QuizStatus.DRAFT and quiz.pre_generate
+    p = await queue.progress(db, quiz.id)
+    assert p == dict(total=2, completed=0, queued=2, running=0, failed=0, students_total=1, students_ready=0, ready=False)
+    assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
+
+
+@pytest.mark.asyncio
+async def test_partial_progress_open_gate_and_no_llm_on_student_start(db):
+    quiz, participant = await prepare_seed(db)
+    await complete_one(db)
+    assert (await queue.progress(db, quiz.id))["completed"] == 1
+    with pytest.raises(HTTPException) as denied:
+        await queue.open_quiz(db, quiz.id)
+    assert denied.value.status_code == 409
+    await complete_one(db)
+    assert (await queue.progress(db, quiz.id))["students_ready"] == 1
+    before = datetime.now(timezone.utc)
+    await queue.open_quiz(db, quiz.id)
+    original_end = quiz.end_time
+    assert ensure_utc(quiz.start_time) >= before
+    assert quiz.end_time - quiz.start_time == timedelta(minutes=30)
+    await queue.open_quiz(db, quiz.id)
+    assert ensure_utc(quiz.end_time) == ensure_utc(original_end)
+    assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
+    first = await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id,
+        student_number=participant.student_number, session_id="a")
+    assert first.question_count == 4 and first.question_index == 1
+    assert "reference_answer" not in first.model_dump()
+    attempt = await db.get(Attempt, first.attempt_id)
+    assert attempt.deadline_at - attempt.started_at == timedelta(minutes=12)
+    again = await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id,
+        student_number=participant.student_number, session_id="a")
+    assert again.attempt_id == first.attempt_id and ensure_utc(again.deadline_at) == ensure_utc(first.deadline_at)
+    assert await db.scalar(select(func.count()).select_from(Question)) == 4
+    with pytest.raises(HTTPException):
+        await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id,
+            student_number=participant.student_number, session_id="b")
+
+
+@pytest.mark.asyncio
+async def test_global_cap_and_stale_lease_fences_late_response(db):
+    quiz, _ = await prepare_seed(db)
+    settings = Settings(generation_global_concurrency=1)
+    first = await queue.claim(db, settings, "mock")
+    assert await queue.claim(db, settings, "mock") is None
+    job = await db.get(GenerationJob, first[0])
+    job.lease_until = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db.commit()
+    second = await queue.claim(db, settings, "mock")
+    assert second and second[1] != first[1]
+    result, raw = await MockLLMProvider().generate_questions()
+    assert not await queue.finish(db, settings, first, result=result, raw=raw)
+    assert (await db.get(GenerationRun, first[1])).state == "interrupted"
+    assert await queue.finish(db, settings, second, result=result, raw=raw)
+    assert (await queue.progress(db, quiz.id))["completed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_only_failed_and_preserve_run_history(db):
+    quiz, _ = await prepare_seed(db)
+    settings = Settings(generation_max_attempts=1)
+    await complete_one(db, settings)
+    failed = await queue.claim(db, settings, "mock")
+    await queue.finish(db, settings, failed, error="synthetic failure", raw="invalid response")
+    assert (await queue.progress(db, quiz.id))["failed"] == 1
+    assert await queue.retry_failed(db, quiz.id) == 1
+    assert await queue.retry_failed(db, quiz.id) == 0
+    assert (await queue.progress(db, quiz.id))["completed"] == 1
+    await complete_one(db, settings)
+    assert (await queue.progress(db, quiz.id))["ready"]
+    assert (await db.get(GenerationRun, failed[1])).raw_response == "invalid response"
+    assert await db.scalar(select(func.count()).select_from(GenerationRun)) == 3
+
+
+@pytest.mark.asyncio
+async def test_reset_prepares_new_round_and_is_idempotent(db):
+    quiz, participant = await prepare_seed(db)
+    await complete_one(db)
+    await complete_one(db)
+    await queue.open_quiz(db, quiz.id)
+    first = await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id,
+        student_number=participant.student_number, session_id="a")
+    await reset_attempt(db, first.attempt_id)
+    await reset_attempt(db, first.attempt_id)
+    assert await db.scalar(select(func.count()).select_from(GenerationJob)) == 4
+    assert await db.scalar(select(func.count()).select_from(Question)) == 4
+    assert (await queue.progress(db, quiz.id))["completed"] == 0
+    with pytest.raises(HTTPException):
+        await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id,
+            student_number=participant.student_number, session_id="a")
+    await complete_one(db)
+    await complete_one(db)
+    second = await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id,
+        student_number=participant.student_number, session_id="a")
+    assert first.attempt_id != second.attempt_id
+    quiz.end_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db.commit()
+    with pytest.raises(HTTPException):
+        await reset_attempt(db, second.attempt_id)
+    assert await db.scalar(select(func.count()).select_from(GenerationJob)) == 4
+
+
+@pytest.mark.asyncio
+async def test_background_runner_persists_without_any_student_request(db):
+    quiz, _ = await prepare_seed(db)
+    quiz_id = quiz.id
+    factory = async_sessionmaker(db.bind, expire_on_commit=False)
+    identity = await queue.claim(db, Settings(), "mock")
+    await queue.run_claim(factory, Settings(), MockLLMProvider(), identity)
+    db.expire_all()
+    assert (await queue.progress(db, quiz_id))["completed"] == 1
+    assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
+
+
+@pytest.mark.asyncio
+async def test_generation_timeout_becomes_visible_failure(db):
+    quiz, _ = await prepare_seed(db)
+    quiz_id = quiz.id
+    class Slow(MockLLMProvider):
+        async def generate_questions(self, **kwargs):
+            await asyncio.sleep(60)
+    settings = Settings(generation_task_timeout_seconds=.01, generation_max_attempts=1)
+    identity = await queue.claim(db, settings, "mock")
+    await queue.run_claim(async_sessionmaker(db.bind, expire_on_commit=False), settings, Slow(), identity)
+    db.expire_all()
+    assert (await queue.progress(db, quiz_id))["failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_api_teacher_auth_and_student_draft_block(db):
+    from app.main import app
+    from app.database import get_db
+    from app.security import hash_secret, create_token
+    quiz, participant = await prepare_seed(db)
+    quiz.quiz_code_hash = hash_secret("TEST1234")
+    await db.commit()
+    async def get_test_db():
+        yield db
+    app.dependency_overrides[get_db] = get_test_db
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.post(f"/api/admin/quizzes/{quiz.id}/open")).status_code == 401
+            denied = await client.post(f"/api/quiz/{quiz.id}/login", json={"student_number":participant.student_number,"quiz_code":"TEST1234"})
+            assert denied.status_code == 403 and "尚未开放" in denied.json()["detail"]
+            client.cookies.set("admin_session", create_token(str(uuid.uuid4()), "admin", username="teacher"))
+            listing = await client.get("/api/admin/quizzes")
+            assert listing.status_code == 200
+            assert listing.json()[0]["preparation"]["total"] == 2
+            assert "result_json" not in listing.text and "reference_answer" not in listing.text
+            assert (await client.post(f"/api/admin/quizzes/{quiz.id}/open")).status_code == 409
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_prevents_reclaim_during_slow_reasoning(db):
+    quiz, _ = await prepare_seed(db)
+    settings = Settings(generation_global_concurrency=1, generation_lease_seconds=.12)
+    identity = await queue.claim(db, settings, "mock")
+    factory = async_sessionmaker(db.bind, expire_on_commit=False)
+    task = asyncio.create_task(queue.heartbeat(factory, settings, identity))
+    try:
+        await asyncio.sleep(.28)
+        async with factory() as observer:
+            assert await queue.claim(observer, settings, "mock") is None
+            job = await observer.get(GenerationJob, identity[0])
+            assert ensure_utc(job.lease_until) > datetime.now(timezone.utc)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_file_database_recovers_after_engine_restart():
+    from pathlib import Path
+    tmp_path = Path(__file__).resolve().parents[2] / "artifacts" / "preparation-tests"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from app.models.base import Base
+    url = "sqlite+aiosqlite:///" + (tmp_path / f"recovery-{uuid.uuid4()}.db").as_posix()
+    engine = create_async_engine(url)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    settings = Settings()
+    async with factory() as session:
+        quiz, _ = await prepare_seed(session)
+        quiz_id = quiz.id
+        await complete_one(session)
+        lost = await queue.claim(session, settings, "mock")
+        job = await session.get(GenerationJob, lost[0])
+        job.lease_until = datetime.now(timezone.utc) - timedelta(seconds=1)
+        await session.commit()
+    await engine.dispose()
+    engine = create_async_engine(url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            recovered = await queue.claim(session, settings, "mock")
+            assert recovered[0] == lost[0] and recovered[1] != lost[1]
+        await queue.run_claim(factory, settings, MockLLMProvider(), recovered)
+        async with factory() as session:
+            assert (await queue.progress(session, quiz_id))["ready"]
+            assert await queue.claim(session, settings, "mock") is None
+            assert await session.scalar(select(func.count()).select_from(Attempt)) == 0
+    finally:
+        await engine.dispose()
+
+
+def test_preparation_progress_for_65_students_three_problems():
+    from types import SimpleNamespace
+    jobs = [SimpleNamespace(participant_id=student, round_no=1,
+        state="succeeded" if student < 28 else "queued") for student in range(65) for _ in range(3)]
+    result = queue.summarize(jobs)
+    assert result["total"] == 195 and result["completed"] == 84
+    assert result["students_ready"] == 28 and result["students_total"] == 65
+    jobs.extend(SimpleNamespace(participant_id=0, round_no=2, state="queued") for _ in range(3))
+    result = queue.summarize(jobs)
+    assert result["total"] == 195 and result["completed"] == 81 and result["students_ready"] == 27
+
+
+def test_additive_migration_preserves_old_quizzes_and_initializes_queue():
+    import importlib.util
+    from pathlib import Path
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, text
+    spec = importlib.util.spec_from_file_location("preparation_migration", Path(__file__).parents[1] / "alembic/versions/0003_pre_generation.py")
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine("sqlite://")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE quizzes (id CHAR(32) PRIMARY KEY)"))
+            connection.execute(text("INSERT INTO quizzes(id) VALUES ('old-quiz')"))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            assert connection.execute(text("SELECT id, pre_generate FROM quizzes")).one() == ("old-quiz", 0)
+            assert connection.scalar(text("SELECT id FROM generation_control")) == 1
+            assert connection.scalar(text("SELECT COUNT(*) FROM generation_jobs")) == 0
+    finally:
+        engine.dispose()

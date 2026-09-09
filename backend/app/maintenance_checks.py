@@ -53,7 +53,8 @@ def smoke_check() -> int:
         print(f"smoke=failed missing={','.join(missing)}")
         return 1
     print(f"smoke=ok prompt_version={GENERATOR_VERSION} grader_prompt_version={GRADER_VERSION}")
-    for name in ("main.py", "services/attempt_maintenance.py", "services/quiz_service.py", "services/generation_service.py"):
+    for name in ("main.py", "services/attempt_maintenance.py", "services/quiz_service.py", "services/generation_service.py",
+                 "services/llm_provider.py", "schemas/llm.py", f"prompts/{GRADER_VERSION}.txt"):
         path = PROMPTS.parent / name
         print(f"source={name} sha256={hashlib.sha256(path.read_bytes()).hexdigest()}")
     try:

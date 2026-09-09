@@ -158,7 +158,7 @@ async def test_v6_isolates_bad_rubric_and_gates_whitespace_deductions(score, rea
     raw = json.dumps({"grades": [{"question_index": 1,
         "validity": "valid", "validity_reason": "输入合法", "objection": "none",
         "units": [{"criterion": "输出", "expected": "1 2", "verdict": {0: "incorrect", 1: "partial", 2: "correct"}[score]}],
-        "reason": reason, "confidence": 0.9}]}, ensure_ascii=False)
+        "reason": reason, "confidence": 0.9, "suggested_score": score}]}, ensure_ascii=False)
     async def handler(request):
         observed.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": raw}}]})

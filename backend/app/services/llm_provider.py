@@ -15,7 +15,7 @@ from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGene
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 GENERATOR_VERSION = "question_generator_v10"
-GRADER_VERSION = "grader_v7"
+GRADER_VERSION = "grader_v8"
 
 KIND_RULES = {
     "trace": "给出可在少量步骤内完整追踪的合法小输入，询问一个确定的输出或状态结果。type=trace。",
@@ -310,7 +310,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 
 {chr(10).join(blocks)}
 
-输出对象必须含 grades 数组，每项含 question_index、validity、validity_reason、objection、units、reason、confidence。不要返回 score，分数由程序计算。
+逐一评价以上全部题号，按系统规定的 JSON 协议返回；每题必须有整数 suggested_score，即使题目有缺陷或评分不确定也不得留空。
 """
         assessment, raw = await self._request_json(system, user, GradingAssessmentResult)
         result = score_assessments(assessment, raw, {item['question_index']: str(item['student_answer']) for item in question_payload},

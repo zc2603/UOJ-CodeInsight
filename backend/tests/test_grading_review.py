@@ -39,6 +39,8 @@ async def test_review_retains_suggestions_hides_final_and_requires_teacher_resol
     details = await attempt_detail(started.attempt_id, db)
     assert details["review_required"] and details["final_percent"] is None
     assert any(q["review_reason"] == "题目存在缺陷" for q in details["questions"])
+    stored = (await db.scalars(select(Answer).join(Answer.question).where(Answer.question.has(attempt_id=started.attempt_id)))).all()
+    assert len(stored) == 4 and all(answer.auto_score == 2 for answer in stored)
     assert (await list_quizzes(db))[0].finished_count == 0
     from app.api.student import result as student_result
     from app.api.dependencies import StudentPrincipal

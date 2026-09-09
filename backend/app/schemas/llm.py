@@ -82,7 +82,7 @@ class GradingUnit(BaseModel):
 
 
 class GradeAssessment(BaseModel):
-    suggested_score: int | None = Field(default=None, ge=0, le=2)
+    suggested_score: int = Field(ge=0, le=2, strict=True)
     scoring_uncertain: bool = False
     question_index: int = Field(ge=1)
     validity: Literal["valid", "invalid", "uncertain"]
@@ -94,10 +94,10 @@ class GradeAssessment(BaseModel):
 
     @model_validator(mode="after")
     def valid_assessment(self):
-        if self.validity == "valid" and (not self.units or self.objection == "correct"):
-            raise ValueError("valid questions require units and cannot have a correct defect objection")
-        if self.validity != "valid" and not (self.validity == "invalid" and self.objection == "correct") and not self.units and self.suggested_score is None:
-            raise ValueError("unresolved questions require units or a suggested score")
+        if self.validity == "valid" and self.objection == "correct":
+            raise ValueError("valid questions cannot have a correct defect objection")
+        if self.validity == "valid" and not self.units and not self.scoring_uncertain:
+            raise ValueError("valid questions without reliable units require scoring uncertainty")
         return self
 
 

@@ -63,6 +63,47 @@ def test_low_confidence_and_explicit_scoring_uncertainty(confidence, uncertain, 
     assert grade.score == 1 and grade.review_required == review
 
 
+@pytest.mark.parametrize("bad_score", [None, -1, 3, 1.5, True, "1"])
+def test_every_assessment_requires_a_discrete_integer_suggestion(bad_score):
+    data = assessment(["correct"]).model_dump()
+    data["grades"][0]["suggested_score"] = bad_score
+    with pytest.raises(ValidationError):
+        GradingAssessmentResult.model_validate(data)
+
+
+def test_missing_suggestion_is_not_silently_defaulted():
+    data = assessment(["correct"]).model_dump()
+    del data["grades"][0]["suggested_score"]
+    with pytest.raises(ValidationError):
+        GradingAssessmentResult.model_validate(data)
+
+
+@pytest.mark.parametrize("score", [0, 1, 2])
+def test_valid_question_without_reliable_units_retains_score_and_review(score):
+    data = assessment(["partial"]).model_dump()
+    data["grades"][0].update(units=[], scoring_uncertain=True,
+                             suggested_score=score, confidence=0.2)
+    grade = score_assessments(GradingAssessmentResult.model_validate(data), "raw", {1: "answer"}).grades[0]
+    assert grade.score == score and grade.review_required and grade.confidence == 0.2
+    data["grades"][0]["scoring_uncertain"] = False
+    with pytest.raises(ValidationError):
+        GradingAssessmentResult.model_validate(data)
+
+
+def test_each_question_gets_score_even_when_some_require_review():
+    data = [assessment(["correct"]).grades[0],
+            assessment(["correct", "incorrect"]).grades[0],
+            assessment([], "invalid", "correct").grades[0],
+            assessment([], "uncertain").grades[0],
+            assessment(["correct"]).grades[0]]
+    for index, grade in enumerate(data, 1):
+        grade.question_index = index
+    result = score_assessments(GradingAssessmentResult(grades=data), "raw",
+                              {1:"answer", 2:"answer", 3:"specific defect", 4:"answer", 5:" "})
+    assert [g.score for g in result.grades] == [2, 1, 2, 1, 0]
+    assert [g.review_required for g in result.grades] == [False, False, True, True, False]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["boundary", "modification"])
 async def test_new_generation_cannot_emit_legacy_combined_type(kind):

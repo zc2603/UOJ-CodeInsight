@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +17,10 @@ from app.database import get_db
 from app.models import (
     GenerationJob,
     GenerationControl,
+    GenerationRun,
+    Answer,
+    LLMCallLog,
+    QuizProblemSnapshot,
     AdminUser,
     Attempt,
     AttemptStatus,
@@ -221,8 +225,26 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
 async def delete_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     # Serialize with claims so no new generation job is claimed during deletion.
     await db.execute(select(GenerationControl).where(GenerationControl.id == 1).with_for_update())
-    # A single SQL DELETE lets database cascades remove all quiz-owned records,
-    # including circular participant/submission references, in one transaction.
+    # Block student starts/resets before locking the parent (same participant-first order).
+    await db.execute(select(QuizParticipant.id).where(QuizParticipant.quiz_id == quiz_id).with_for_update())
+    await db.execute(select(Quiz.id).where(Quiz.id == quiz_id).with_for_update())
+    await db.execute(select(Attempt.id).where(Attempt.quiz_id == quiz_id).with_for_update())
+    attempts = select(Attempt.id).where(Attempt.quiz_id == quiz_id)
+    questions = select(Question.id).where(Question.attempt_id.in_(attempts))
+    jobs = select(GenerationJob.id).where(GenerationJob.quiz_id == quiz_id)
+    # Explicit child-first deletion avoids PostgreSQL cascade-trigger ordering conflicts
+    # between questions/attempts and their referenced submission snapshots.
+    await db.execute(delete(Answer).where(Answer.question_id.in_(questions)))
+    await db.execute(delete(LLMCallLog).where(LLMCallLog.attempt_id.in_(attempts)))
+    await db.execute(delete(Question).where(Question.attempt_id.in_(attempts)))
+    await db.execute(delete(Attempt).where(Attempt.quiz_id == quiz_id))
+    await db.execute(delete(GenerationRun).where(GenerationRun.job_id.in_(jobs)))
+    await db.execute(delete(GenerationJob).where(GenerationJob.quiz_id == quiz_id))
+    await db.execute(update(QuizParticipant).where(QuizParticipant.quiz_id == quiz_id)
+        .values(assigned_submission_snapshot_id=None))
+    await db.execute(delete(SubmissionSnapshot).where(SubmissionSnapshot.quiz_id == quiz_id))
+    await db.execute(delete(QuizParticipant).where(QuizParticipant.quiz_id == quiz_id))
+    await db.execute(delete(QuizProblemSnapshot).where(QuizProblemSnapshot.quiz_id == quiz_id))
     result = await db.execute(delete(Quiz).where(Quiz.id == quiz_id))
     await db.commit()
     return {"deleted": result.rowcount > 0}

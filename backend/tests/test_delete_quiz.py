@@ -15,6 +15,13 @@ from app.services import generation_service as queue
 @pytest.mark.asyncio
 async def test_delete_cascades_all_owned_data_preserves_other_quiz_and_fences_result(db):
     await db.execute(text("PRAGMA foreign_keys=ON"))
+    # Enforce immediate reference checks and child-first removal, independently of SQLite cascade ordering.
+    await db.execute(text("""CREATE TRIGGER snapshot_reference_guard BEFORE DELETE ON submission_snapshots
+        WHEN EXISTS (SELECT 1 FROM questions WHERE submission_snapshot_id = OLD.id)
+        BEGIN SELECT RAISE(ABORT, 'snapshot still referenced by questions'); END"""))
+    await db.execute(text("""CREATE TRIGGER quiz_child_order_guard BEFORE DELETE ON quizzes
+        WHEN EXISTS (SELECT 1 FROM questions JOIN attempts ON questions.attempt_id = attempts.id WHERE attempts.quiz_id = OLD.id)
+        BEGIN SELECT RAISE(ABORT, 'questions must be explicitly deleted first'); END"""))
     quiz, participant = await seed_participant(db)
     other, _ = await seed_participant(db)
     quiz_id, other_id = quiz.id, other.id

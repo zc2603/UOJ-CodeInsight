@@ -14,6 +14,7 @@ class AdminLoginRequest(BaseModel):
 
 
 class QuizPreviewRequest(BaseModel):
+    roster_text: str | None = Field(default=None, max_length=65536)
     contest_id: int = Field(gt=0)
     submission_cutoff: datetime | None = None
 
@@ -30,7 +31,17 @@ class ImportIssue(BaseModel):
     error: str
 
 
+class RosterPreview(BaseModel):
+    requested_count: int
+    duplicate_count: int
+    matched_students: list[str]
+    unknown_students: list[str]
+    unavailable_students: list[str]
+    selected_submission_snapshots: int
+
+
 class ContestPreviewResponse(BaseModel):
+    roster: RosterPreview | None = None
     contest_id: int
     contest_name: str
     contest_start_time: datetime
@@ -45,6 +56,7 @@ class ContestPreviewResponse(BaseModel):
 
 
 class QuizCreateRequest(BaseModel):
+    roster_text: str | None = Field(default=None, max_length=65536)
     contest_id: int = Field(gt=0)
     name: str | None = Field(default=None, min_length=1, max_length=200)
     start_time: datetime | None = None

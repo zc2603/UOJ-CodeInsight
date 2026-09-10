@@ -37,11 +37,14 @@ from app.services.question_policy import allocated_kind
 from app.time_utils import ensure_utc
 from app.schemas.llm import QuestionGenerationResult
 from app.services.generation_service import enqueue
+from app.services.roster_service import select_roster
 
 
-def preview_from_bundle(bundle: ImportBundle) -> ContestPreviewResponse:
+def preview_from_bundle(bundle: ImportBundle, roster_text: str | None = None) -> ContestPreviewResponse:
+    _, roster = select_roster(bundle, roster_text)
     ready_students = {student for student, _ in bundle.selected}
     return ContestPreviewResponse(
+        roster=roster,
         contest_id=bundle.contest.contest_id,
         contest_name=bundle.contest.name,
         contest_start_time=bundle.contest.start_time,
@@ -62,6 +65,9 @@ def preview_from_bundle(bundle: ImportBundle) -> ContestPreviewResponse:
 async def persist_quiz(
     db: AsyncSession, bundle: ImportBundle, request: QuizCreateRequest
 ) -> tuple[Quiz, str]:
+    bundle, roster = select_roster(bundle, request.roster_text)
+    if roster is not None and not roster.matched_students:
+        raise ValueError("名单中没有可参与的学生，请调整名单后再创建")
     now = datetime.now(timezone.utc)
     start_time = request.start_time or now
     end_time = request.end_time or (start_time + timedelta(minutes=30))

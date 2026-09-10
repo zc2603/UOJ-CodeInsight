@@ -13,6 +13,8 @@ import type { AttemptDetail, AttemptQuestionDetail, QuizSummary, ResultRow, Prep
 type View = "list" | "create" | "results" | "attempt" | "preparation";
 
 interface ContestPreview {
+  roster: null | { requested_count: number; duplicate_count: number; matched_students: string[];
+    unknown_students: string[]; unavailable_students: string[]; selected_submission_snapshots: number };
   contest_name: string;
   submission_cutoff: string;
   cutoff_reached: boolean;
@@ -97,6 +99,9 @@ export function AdminApp() {
   const [overrideScore, setOverrideScore] = useState(0);
   const [overrideReason, setOverrideReason] = useState("");
   const [contestId, setContestId] = useState("");
+  const [rosterText, setRosterText] = useState<string | null>(null);
+  const [rosterName, setRosterName] = useState("");
+  const [rosterError, setRosterError] = useState("");
   const [preview, setPreview] = useState<ContestPreview | null>(null);
   const [createdCode, setCreatedCode] = useState("");
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
@@ -239,13 +244,35 @@ export function AdminApp() {
     setCreatedCode("");
     try {
       setPreview(await api<ContestPreview>("/api/admin/quizzes/preview-contest", {
-        method: "POST", body: JSON.stringify({ contest_id: Number(contestId) }),
+        method: "POST", body: JSON.stringify({ contest_id: Number(contestId), roster_text: rosterText }),
       }));
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function updateRoster(file: File | null) {
+    setBusy(true);
+    setRosterError("");
+    try {
+      let text: string | null = null;
+      if (file) {
+        if (file.size > 65536) throw new Error("名单文件不能超过 64 KB");
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le" : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
+        try { text = new TextDecoder(encoding, { fatal: true }).decode(bytes); }
+        catch { throw new Error("无法识别文本编码，请将名单保存为 UTF-8 纯文本后重试"); }
+      }
+      const updated = await api<ContestPreview>("/api/admin/quizzes/preview-contest", {
+        method: "POST", body: JSON.stringify({ contest_id: Number(contestId), roster_text: text }),
+      });
+      setPreview(updated);
+      setRosterText(text);
+      setRosterName(file?.name ?? "");
+    } catch (error) { setRosterError((error as Error).message); }
+    finally { setBusy(false); }
   }
 
   async function performCreateQuiz(allowBeforeCutoff: boolean) {
@@ -255,7 +282,7 @@ export function AdminApp() {
       const data = await api<{ id: string; quiz_code: string }>("/api/admin/quizzes", {
         method: "POST",
         body: JSON.stringify({
-          contest_id: Number(contestId), show_score_after_finish: false, allow_before_cutoff: allowBeforeCutoff,
+          contest_id: Number(contestId), roster_text: rosterText, show_score_after_finish: false, allow_before_cutoff: allowBeforeCutoff,
         }),
       });
       setCreatedCode(data.quiz_code);
@@ -271,6 +298,7 @@ export function AdminApp() {
   }
 
   function createQuiz() {
+    if (busy || rosterError || !preview || (preview.roster && !preview.roster.matched_students.length)) return;
     const creatingBeforeCutoff = preview !== null && !preview.cutoff_reached;
     if (!creatingBeforeCutoff) return void performCreateQuiz(false);
     setConfirm({
@@ -541,7 +569,7 @@ export function AdminApp() {
           <div className="create-flow">
             <form className={`card flow-card ${preview ? "complete" : "active"}`} onSubmit={doPreview}>
               <div className="section-rail"><div className="section-number">{preview ? <Check size={17} /> : "1"}</div><i /></div>
-              <div className="section-body"><div className="step-label">第一步</div><h2>导入比赛</h2><p className="muted">输入 Contest ID，导入本次测评的比赛信息。</p><label>Contest ID<input type="number" min="1" value={contestId} onChange={event => { setContestId(event.target.value); setPreview(null); setCreatedCode(""); }} placeholder="例如：1" required /><small>即 UOJ 比赛页面网址末尾的数字</small></label><button disabled={busy}>{busy && <LoaderCircle className="spin" size={16} />}{busy ? "正在导入" : preview ? "重新导入" : "导入并预览"}</button></div>
+              <div className="section-body"><div className="step-label">第一步</div><h2>导入比赛</h2><p className="muted">输入 Contest ID，导入本次测评的比赛信息。</p><label>Contest ID<input type="number" min="1" disabled={busy} value={contestId} onChange={event => { setContestId(event.target.value); setPreview(null); setRosterText(null); setRosterName(""); setRosterError(""); setCreatedCode(""); }} placeholder="例如：1" required /><small>即 UOJ 比赛页面网址末尾的数字</small></label><button disabled={busy}>{busy && <LoaderCircle className="spin" size={16} />}{busy ? "正在导入" : preview ? "重新导入" : "导入并预览"}</button></div>
             </form>
 
             <section className={`card flow-card ${preview ? "active" : "pending"}`}>
@@ -554,9 +582,27 @@ export function AdminApp() {
                   <div className="stats"><div><strong>{preview.problems.length}</strong><span>比赛题目</span></div><div><strong>{preview.numeric_student_accounts}</strong><span>学生人数</span></div><div><strong>{preview.students_with_eligible_problem}</strong><span>可参与人数</span></div><div><strong>{preview.parser_errors.length}</strong><span>导入异常</span></div></div>
                   <div className="problem-chip-list">{preview.problems.map(problem => <span key={problem.problem_id}><b>#{problem.problem_id}</b>{problem.title}</span>)}</div>
                   {preview.parser_errors.length > 0 && <details className="parser-errors"><summary>查看 {preview.parser_errors.length} 条导入异常</summary><ul>{preview.parser_errors.map((error, index) => <li key={`${error.student_number}-${error.problem_id}-${index}`}>{error.student_number} · 题目 {error.problem_id}：{error.error}</li>)}</ul></details>}
+                  <section className="roster-panel" aria-label="参与范围">
+                    <div className="roster-heading"><div><h3><Users size={18} />参与范围 <span>可选</span></h3><p>{rosterText === null ? "全部可参与学生" : "按名单抽查"}</p></div>
+                      <label className={`button secondary roster-upload ${busy ? "disabled" : ""}`}><FileText size={16} />{rosterName ? "更换名单" : "上传抽查名单"}<input type="file" aria-label="上传抽查名单" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void updateRoster(file); }} /></label>
+                    </div>
+                    <p className="roster-hint">仅抽查部分学生时上传名单；不上传则选择全部可参与学生。</p>
+                    <details className="roster-format"><summary>名单怎么写？</summary><p>每行一个学号（用户名），也可用空格、逗号分隔。无需姓名、标题或序号，重复学号自动合并。</p><pre>{"231250001\n231250002\n231250003"}</pre><p>支持 .txt、.md 或任意后缀的纯文本文件，最大 64 KB。建议使用 UTF-8 编码。</p></details>
+                    {(rosterName || rosterError) && <div className="roster-file"><FileText size={16} /><span>{rosterName || "名单未导入"}</span><button className="text-button" disabled={busy} onClick={() => void updateRoster(null)}>移除名单，改为全员</button></div>}
+                    {busy && <p className="roster-hint" role="status">正在核对参与名单…</p>}
+                    {rosterError && <p className="roster-error" role="alert">{rosterError}</p>}
+                    {!rosterError && preview.roster && <div className="roster-report" aria-live="polite">
+                      <div className="roster-summary"><strong>{preview.roster.matched_students.length}<small>人将参加测评</small></strong><span>名单共 {preview.roster.requested_count} 人{preview.roster.duplicate_count > 0 ? `，已合并 ${preview.roster.duplicate_count} 条重复记录` : ""}</span></div>
+                      {preview.roster.matched_students.length === 0 && <p className="roster-error">没有匹配到可参与学生，请调整名单后再创建。</p>}
+                      {[["查看入选名单", preview.roster.matched_students], ["不在本场学生列表", preview.roster.unknown_students], ["没有有效提交", preview.roster.unavailable_students]].map(([label, names]) => {
+                        const students = names as string[];
+                        return students.length > 0 && <details key={label as string} className="roster-names"><summary>{label as string} · {students.length} 人</summary><div>{students.map(name => <code key={name}>{name}</code>)}</div></details>;
+                      })}
+                    </div>}
+                  </section>
                   <div className="policy-box"><div><Check size={16} /><span>创建后开始出题</span></div><div><Check size={16} /><span>教师开放后 30 分钟内进入</span></div><div><Check size={16} /><span>每道有效题目固定 2 问</span></div><div><Check size={16} /><span>每个问题 3 分钟</span></div></div>
-                  <p className="muted">将为 {preview.selected_submission_snapshots} 道有效题目准备问题，产生相应的模型调用费用。出题完成后，由你决定何时开放。</p>
-                  <button className="create-submit" onClick={createQuiz} disabled={busy}>{busy && <LoaderCircle className="spin" size={16} />}{busy ? "正在创建" : preview.cutoff_reached ? "创建并准备问题" : "提前创建并准备问题"}</button>
+                  <p className="muted">将为 {preview.roster?.matched_students.length ?? preview.students_with_eligible_problem} 名学生的 {preview.roster?.selected_submission_snapshots ?? preview.selected_submission_snapshots} 道有效题目准备问题，产生相应的模型调用费用。出题完成后，由你决定何时开放。</p>
+                  <button className="create-submit" onClick={createQuiz} disabled={busy || !!rosterError || (preview.roster !== null && !!preview.roster && preview.roster.matched_students.length === 0)}>{busy && <LoaderCircle className="spin" size={16} />}{busy ? "正在创建" : preview.cutoff_reached ? "创建并准备问题" : "提前创建并准备问题"}</button>
                   {createdCode && selected && <div className="code-reveal"><div className="reveal-symbol"><Check size={18} /></div><div><span>测评已创建</span><small>复制学生链接即可发布；备用码只需在登录异常时提供。</small></div><div className="inline-actions"><button onClick={() => void copyText(studentLink(selected.id), "学生链接已复制")}><Copy size={16} />复制学生链接</button><details><summary>备用码</summary><strong>{createdCode}</strong><button className="secondary" onClick={() => void copyText(createdCode, "备用测评码已复制")}>复制</button></details></div></div>}
                 </>}
               </div>

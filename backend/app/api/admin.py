@@ -125,7 +125,7 @@ async def preview_contest(payload: QuizPreviewRequest, request: Request):
             payload.submission_cutoff,
             require_cutoff_reached=False,
         )
-        return preview_from_bundle(bundle)
+        return preview_from_bundle(bundle, payload.roster_text)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except HTTPException:

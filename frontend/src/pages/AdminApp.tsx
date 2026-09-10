@@ -195,18 +195,22 @@ export function AdminApp() {
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [loggedIn, view]);
 
-  function preparationAction(quiz: QuizSummary, retry = false) {
+  function preparationAction(quiz: QuizSummary, action: "open" | "retry" | "stop" = "open") {
+    const p = quiz.preparation;
+    const partial = action === "open" && !p?.ready;
     setConfirm({
-      title: retry ? "重试未完成的出题？" : "现在开放测评？",
-      description: retry ? "仅重试失败的题目，已经完成的问题会保留。重试会产生模型调用费用。" : "开放后，学生有 30 分钟进入测评。每位学生从开始作答时独立计时。",
-      confirmLabel: retry ? "重试出题" : "开放测评",
+      title: action === "stop" ? "终止本场出题？" : action === "retry" ? "重试未完成的出题？" : partial ? "部分问题未完成，仍要发布？" : "现在开放测评？",
+      description: action === "stop" ? "已完成的问题会保留，等待中和正在生成的任务将终止。已发送给模型的请求仍可能计费。" : action === "retry" ? "重新生成失败或已终止的题目，已经完成的问题会保留。重试会产生模型调用费用。" : partial ? `目前 ${p?.students_ready ?? 0} 名学生的整套问题已就绪，可参加测评；另有 ${(p?.students_total ?? 0) - (p?.students_ready ?? 0)} 名学生暂不能参加。剩余出题任务将终止。发布后，学生有 30 分钟进入测评。` : "开放后，学生有 30 分钟进入测评。每位学生从开始作答时独立计时。",
+      confirmLabel: action === "stop" ? "终止出题" : action === "retry" ? "重试出题" : partial ? "确认发布" : "开放测评",
       action: async () => {
         setBusy(true);
         setMessage("");
         try {
-          await api(`/api/admin/quizzes/${quiz.id}/${retry ? "retry-preparation" : "open"}`, { method: "POST" });
+          await api(`/api/admin/quizzes/${quiz.id}/${action === "retry" ? "retry-preparation" : action === "stop" ? "stop-preparation" : "open"}`, {
+            method: "POST", ...(action === "open" ? { body: JSON.stringify({ confirm_partial: partial }) } : {}),
+          });
           await loadQuizzes();
-          setToast(retry ? "已安排重试" : "测评已开放，可通知学生进入");
+          setToast(action === "stop" ? "出题已终止，已完成的问题已保留" : action === "retry" ? "已安排重试" : "测评已开放，可通知学生进入");
         } catch (error) { setMessage((error as Error).message); }
         finally { setBusy(false); }
       },
@@ -507,10 +511,10 @@ export function AdminApp() {
           {quizzes.filter(quiz => quiz.preparation && (quiz.status.toUpperCase() === "DRAFT" || !quiz.preparation.ready)).map(quiz => {
             const p = quiz.preparation!;
             return <section className="card preparation-card" key={quiz.id} aria-label={`${quiz.name}出题进度`}>
-              <div className="preparation-heading"><div><span className="eyebrow">课前准备</span><h2>{quiz.name}</h2></div><span className={`status-pill status-${p.ready ? "finished" : p.failed ? "grading-error" : "preparing"}`}>{p.ready ? "已就绪" : p.total === 0 ? "无有效提交" : p.failed ? "部分出题失败" : "正在出题"}</span></div>
+              <div className="preparation-heading"><div><span className="eyebrow">课前准备</span><h2>{quiz.name}</h2></div><span className={`status-pill status-${p.ready ? "finished" : p.failed ? "grading-error" : "preparing"}`}>{p.ready ? "已就绪" : p.total === 0 ? "无有效提交" : p.cancelled && !p.running && !p.queued ? "已终止" : p.failed ? "部分出题失败" : "正在出题"}</span></div>
               <div className="preparation-counts"><div><strong>{p.completed}<small> / {p.total}</small></strong><span>已完成出题的有效题目</span></div><div><strong>{p.students_ready}<small> / {p.students_total}</small></strong><span>问题全部就绪的学生</span></div></div>
               <progress max={p.total || 1} value={p.completed} aria-label="已完成出题的有效题目" />
-              <div className="preparation-footer"><span>{p.ready ? `已准备 ${p.completed * 2} 个问题，可以开放测评。` : p.total === 0 ? "本场没有可用于出题的提交，请核对 Contest 后重新创建。" : `出题中 ${p.running} · 等待 ${p.queued} · 失败 ${p.failed}（每道有效题目生成 2 问）`}</span><div className="inline-actions">{p.failed > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, true)}>重试失败题目</button>}{quiz.status.toUpperCase() === "DRAFT" && <button disabled={busy || !p.ready} onClick={() => preparationAction(quiz)}>开放测评</button>}</div></div>
+              <div className="preparation-footer"><span>{p.ready ? `已准备 ${p.completed * 2} 个问题，可以开放测评。` : p.total === 0 ? "本场没有可用于出题的提交，请核对 Contest 后重新创建。" : `出题中 ${p.running} · 等待 ${p.queued} · 失败 ${p.failed} · 已终止 ${p.cancelled}（每道有效题目生成 2 问）`}</span><div className="inline-actions">{p.running + p.queued > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "stop")}>终止出题</button>}{p.failed + p.cancelled > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "retry")}>重试未完成题目</button>}{quiz.status.toUpperCase() === "DRAFT" && <button disabled={busy || (!p.ready && !(p.students_ready > 0 && p.failed + p.cancelled > 0))} onClick={() => preparationAction(quiz)}>开放测评</button>}</div></div>
             </section>;
           })}
 

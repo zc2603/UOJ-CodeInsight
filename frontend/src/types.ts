@@ -25,7 +25,7 @@ export interface StudentQuestion {
 }
 
 export interface PreparationProgress {
-  total: number; completed: number; running: number; queued: number; failed: number;
+  total: number; completed: number; running: number; queued: number; failed: number; cancelled: number;
   students_total: number; students_ready: number; ready: boolean;
 }
 

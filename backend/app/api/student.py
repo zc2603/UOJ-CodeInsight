@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.api.dependencies import StudentPrincipal, require_student
 from app.config import get_settings
 from app.database import SessionLocal, get_db
-from app.models import Attempt, AttemptStatus, Question, Quiz, QuizParticipant, QuizParticipantStatus, QuizStatus
+from app.models import GenerationJob, Attempt, AttemptStatus, Question, Quiz, QuizParticipant, QuizParticipantStatus, QuizStatus
 from app.schemas.api import (
     AnswerSubmitRequest,
     StudentLoginRequest,
@@ -138,6 +138,15 @@ async def login(
             status.HTTP_409_CONFLICT,
             "本次 Contest 中没有可用于代码抽查的提交，请联系教师。",
         )
+
+    if participant.quiz.pre_generate and existing is None:
+        latest_round = await db.scalar(select(func.max(GenerationJob.round_no)).where(
+            GenerationJob.participant_id == participant.id))
+        states = (await db.execute(select(GenerationJob.state).where(
+            GenerationJob.participant_id == participant.id,
+            GenerationJob.round_no == latest_round))).scalars().all()
+        if not states or len(states) != participant.eligible_problem_count or any(state != "succeeded" for state in states):
+            raise HTTPException(409, "你的问题尚未全部准备完成，暂不能参加本场测评，请联系教师")
 
     session_id = session_id or secrets.token_urlsafe(24)
     token = create_token(

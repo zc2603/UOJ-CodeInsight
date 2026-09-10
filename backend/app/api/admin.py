@@ -5,7 +5,7 @@ import io
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,7 @@ from app.schemas.api import (
     ContestPreviewResponse,
     ManualOverrideRequest,
     QuizCreateRequest,
+    QuizOpenRequest,
     QuizCreatedResponse,
     QuizPreviewRequest,
     QuizSummary,
@@ -44,7 +45,7 @@ from app.security import create_token, generate_quiz_code, hash_secret, verify_s
 from app.services.grading_service import grade_attempt
 from app.services.quiz_service import persist_quiz, preview_from_bundle, reset_attempt
 from app.time_utils import ensure_utc
-from app.services.generation_service import open_quiz, retry_failed, summarize
+from app.services.generation_service import open_quiz, retry_failed, summarize, stop_preparation
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -251,9 +252,14 @@ async def delete_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/quizzes/{quiz_id}/open", dependencies=[Depends(require_admin)])
-async def publish_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    quiz = await open_quiz(db, quiz_id)
+async def publish_quiz(quiz_id: uuid.UUID, payload: QuizOpenRequest = Body(default=QuizOpenRequest()), db: AsyncSession = Depends(get_db)):
+    quiz = await open_quiz(db, quiz_id, confirm_partial=payload.confirm_partial)
     return {"status": quiz.status, "start_time": quiz.start_time, "end_time": quiz.end_time}
+
+
+@router.post("/quizzes/{quiz_id}/stop-preparation", dependencies=[Depends(require_admin)])
+async def stop_quiz_preparation(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    return {"cancelled": await stop_preparation(db, quiz_id)}
 
 
 @router.post("/quizzes/{quiz_id}/retry-preparation", dependencies=[Depends(require_admin)])

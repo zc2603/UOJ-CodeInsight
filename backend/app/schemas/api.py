@@ -61,7 +61,12 @@ class QuizCreatedResponse(BaseModel):
     status: QuizStatus
 
 
+class QuizOpenRequest(BaseModel):
+    confirm_partial: bool = False
+
+
 class PreparationProgress(BaseModel):
+    cancelled: int = 0
     total: int
     completed: int
     running: int

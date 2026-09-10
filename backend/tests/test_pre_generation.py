@@ -51,7 +51,7 @@ async def test_create_atomically_enqueues_only_eligible_submissions(db):
     quiz, _ = await persist_quiz(db, bundle, QuizCreateRequest(contest_id=7))
     assert quiz.status == QuizStatus.DRAFT and quiz.pre_generate
     p = await queue.progress(db, quiz.id)
-    assert p == dict(total=2, completed=0, queued=2, running=0, failed=0, students_total=1, students_ready=0, ready=False)
+    assert p == dict(total=2, completed=0, queued=2, running=0, failed=0, cancelled=0, students_total=1, students_ready=0, ready=False)
     assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
 
 
@@ -325,3 +325,137 @@ def test_additive_migration_preserves_old_quizzes_and_initializes_queue():
             assert connection.scalar(text("SELECT COUNT(*) FROM generation_jobs")) == 0
     finally:
         engine.dispose()
+
+
+async def add_unprepared_student(db, quiz):
+    from app.models import QuizParticipant, QuizParticipantStatus
+    participant = QuizParticipant(quiz_id=quiz.id, student_number="231250002",
+        eligible_problem_count=2, status=QuizParticipantStatus.READY)
+    db.add(participant)
+    await db.flush()
+    originals = (await db.execute(select(SubmissionSnapshot).where(SubmissionSnapshot.quiz_id == quiz.id))).scalars().all()
+    snapshots = [SubmissionSnapshot(quiz_id=quiz.id, participant_id=participant.id,
+        problem_snapshot_id=item.problem_snapshot_id, uoj_submission_id=900 + index,
+        uoj_problem_id=item.uoj_problem_id, source_code="int main() {}", language="C++",
+        uoj_score=100, uoj_submit_time=item.uoj_submit_time) for index, item in enumerate(originals)]
+    db.add_all(snapshots)
+    await db.flush()
+    await queue.enqueue(db, snapshots)
+    await db.commit()
+    return participant
+
+
+@pytest.mark.asyncio
+async def test_stop_is_durable_idempotent_and_fences_late_results(db):
+    quiz, _ = await prepare_seed(db)
+    finished = await complete_one(db)
+    running = await queue.claim(db, Settings(), "mock")
+    assert await queue.stop_preparation(db, quiz.id) == 1
+    assert await queue.stop_preparation(db, quiz.id) == 0
+    result, raw = await MockLLMProvider().generate_questions()
+    assert not await queue.finish(db, Settings(), running, result=result, raw=raw)
+    assert (await db.get(GenerationJob, finished[0])).state == "succeeded"
+    assert (await db.get(GenerationRun, running[1])).state == "cancelled"
+    factory = async_sessionmaker(db.bind, expire_on_commit=False)
+    async with factory() as reopened:
+        assert await queue.claim(reopened, Settings(), "mock") is None
+        assert (await queue.progress(reopened, quiz.id))["cancelled"] == 1
+    assert await queue.retry_failed(db, quiz.id) == 1
+    await complete_one(db)
+    assert (await queue.progress(db, quiz.id))["ready"]
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_active_provider_and_prevents_unstarted_call(db):
+    quiz, _ = await prepare_seed(db)
+    quiz_id = quiz.id
+    started, cancelled = asyncio.Event(), asyncio.Event()
+    class Slow(MockLLMProvider):
+        async def generate_questions(self, **kwargs):
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            finally:
+                cancelled.set()
+    settings = Settings(generation_lease_seconds=.12)
+    identity = await queue.claim(db, settings, "mock")
+    factory = async_sessionmaker(db.bind, expire_on_commit=False)
+    task = asyncio.create_task(queue.run_claim(factory, settings, Slow(), identity))
+    await asyncio.wait_for(started.wait(), 2)
+    assert await queue.stop_preparation(db, quiz_id) == 2
+    await asyncio.wait_for(task, 2)
+    assert cancelled.is_set()
+    # A claim stopped before its runner starts must never send a model request.
+    class CountCalls(MockLLMProvider):
+        calls = 0
+        async def generate_questions(self, **kwargs):
+            self.calls += 1
+            return await super().generate_questions(**kwargs)
+    provider = CountCalls()
+    await queue.run_claim(factory, settings, provider, identity)
+    assert provider.calls == 0
+    db.expire_all()
+    assert (await queue.progress(db, quiz_id))["cancelled"] == 2
+
+
+@pytest.mark.asyncio
+async def test_partial_publish_requires_confirmation_and_complete_student_set(db):
+    quiz, first = await prepare_seed(db)
+    await complete_one(db)
+    await queue.stop_preparation(db, quiz.id)
+    with pytest.raises(HTTPException) as denied:
+        await queue.open_quiz(db, quiz.id, confirm_partial=True)
+    assert denied.value.status_code == 409
+    await queue.retry_failed(db, quiz.id)
+    await complete_one(db)
+    second = await add_unprepared_student(db, quiz)
+    with pytest.raises(HTTPException):
+        await queue.open_quiz(db, quiz.id, confirm_partial=True)  # Must stop first.
+    failure = await queue.claim(db, Settings(), "mock")
+    await queue.finish(db, Settings(generation_max_attempts=1), failure, error="synthetic failure")
+    running = await queue.claim(db, Settings(), "mock")
+    with pytest.raises(HTTPException):
+        await queue.open_quiz(db, quiz.id)
+    await queue.open_quiz(db, quiz.id, confirm_partial=True)
+    assert (await db.get(GenerationJob, running[0])).state == "cancelled"
+    original_end = quiz.end_time
+    await queue.open_quiz(db, quiz.id, confirm_partial=True)
+    assert ensure_utc(quiz.end_time) == ensure_utc(original_end)
+    response = await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id,
+        student_number=first.student_number, session_id="ready")
+    assert response.question_count == 4
+    with pytest.raises(HTTPException):
+        await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id,
+            student_number=second.student_number, session_id="not-ready")
+    assert await db.scalar(select(func.count()).select_from(Attempt)) == 1
+
+
+@pytest.mark.asyncio
+async def test_partial_publish_api_and_student_login_gate(db):
+    from app.main import app
+    from app.database import get_db
+    from app.security import hash_secret, create_token
+    quiz, first = await prepare_seed(db)
+    await complete_one(db)
+    await complete_one(db)
+    second = await add_unprepared_student(db, quiz)
+    quiz.quiz_code_hash = hash_secret("TEST1234")
+    await db.commit()
+    async def get_test_db():
+        yield db
+    app.dependency_overrides[get_db] = get_test_db
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            path = f"/api/admin/quizzes/{quiz.id}"
+            assert (await client.post(path + "/stop-preparation")).status_code == 401
+            client.cookies.set("admin_session", create_token(str(uuid.uuid4()), "admin", username="teacher"))
+            assert (await client.post(path + "/stop-preparation")).json() == {"cancelled": 2}
+            assert (await client.post(path + "/open")).status_code == 409
+            assert (await client.post(path + "/open", json={"confirm_partial": True})).status_code == 200
+            listing = (await client.get("/api/admin/quizzes")).json()[0]["preparation"]
+            assert listing["cancelled"] == 2 and listing["students_ready"] == 1
+            for student, expected in [(second, 409), (first, 200)]:
+                response = await client.post(f"/api/quiz/{quiz.id}/login", json={"student_number":student.student_number,"quiz_code":"TEST1234"})
+                assert response.status_code == expected, response.text
+    finally:
+        app.dependency_overrides.clear()

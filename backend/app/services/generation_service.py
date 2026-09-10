@@ -29,10 +29,10 @@ def summarize(jobs):
     for job in jobs:
         latest[job.participant_id] = max(latest.get(job.participant_id, 0), job.round_no)
     current = [j for j in jobs if j.round_no == latest[j.participant_id]]
-    counts = {state: sum(j.state == state for j in current) for state in ("queued", "running", "succeeded", "failed")}
+    counts = {state: sum(j.state == state for j in current) for state in ("queued", "running", "succeeded", "failed", "cancelled")}
     ready = sum(all(j.state == "succeeded" for j in current if j.participant_id == pid) for pid in latest)
     return dict(total=len(current), completed=counts["succeeded"], running=counts["running"],
-        queued=counts["queued"], failed=counts["failed"], students_total=len(latest), students_ready=ready,
+        queued=counts["queued"], failed=counts["failed"], cancelled=counts["cancelled"], students_total=len(latest), students_ready=ready,
         ready=bool(current) and counts["succeeded"] == len(current))
 
 
@@ -41,7 +41,35 @@ async def progress(db, quiz_id):
     return summarize(jobs)
 
 
-async def open_quiz(db, quiz_id):
+async def stop_pending(db, quiz_id):
+    now = datetime.now(timezone.utc)
+    jobs = (await db.execute(select(GenerationJob).where(GenerationJob.quiz_id == quiz_id,
+        GenerationJob.state.in_(["queued", "running"])).with_for_update()
+        .execution_options(populate_existing=True))).scalars().all()
+    for job in jobs:
+        if job.lease_token:
+            await db.execute(update(GenerationRun).where(GenerationRun.id == job.lease_token)
+                .values(state="cancelled", finished_at=now, error="教师终止出题"))
+        job.state = "cancelled"
+        job.lease_token = None
+        job.lease_until = None
+        job.error = "教师终止出题"
+    await db.flush()
+    return len(jobs)
+
+
+async def stop_preparation(db, quiz_id):
+    await db.execute(select(GenerationControl).where(GenerationControl.id == 1).with_for_update())
+    quiz = await db.scalar(select(Quiz).where(Quiz.id == quiz_id).with_for_update())
+    if quiz is None:
+        raise HTTPException(404, "测评不存在")
+    count = await stop_pending(db, quiz_id)
+    await db.commit()
+    return count
+
+
+async def open_quiz(db, quiz_id, *, confirm_partial=False):
+    await db.execute(select(GenerationControl).where(GenerationControl.id == 1).with_for_update())
     quiz = (await db.execute(select(Quiz).where(Quiz.id == quiz_id).with_for_update()
         .execution_options(populate_existing=True))).scalar_one_or_none()
     if quiz is None:
@@ -50,8 +78,15 @@ async def open_quiz(db, quiz_id):
         return quiz  # Repeated clicks must never extend the entry window.
     if not quiz.pre_generate or quiz.status != QuizStatus.DRAFT:
         raise HTTPException(409, "当前测评不能开放")
-    if not (await progress(db, quiz_id))["ready"]:
-        raise HTTPException(409, "请等待全部问题准备完成后再开放")
+    preparation = await progress(db, quiz_id)
+    if not preparation["ready"]:
+        if not confirm_partial:
+            raise HTTPException(409, "出题尚未全部完成，请确认后再发布")
+        if not (preparation["failed"] or preparation["cancelled"]):
+            raise HTTPException(409, "请先终止出题，或等待出题完成")
+        if not preparation["students_ready"]:
+            raise HTTPException(409, "尚无学生的整套问题准备完成，暂不能发布")
+        await stop_pending(db, quiz_id)
     now = datetime.now(timezone.utc)
     quiz.status = QuizStatus.PUBLISHED
     quiz.start_time = now
@@ -61,6 +96,7 @@ async def open_quiz(db, quiz_id):
 
 
 async def retry_failed(db, quiz_id):
+    await db.execute(select(GenerationControl).where(GenerationControl.id == 1).with_for_update())
     quiz = (await db.execute(select(Quiz).where(Quiz.id == quiz_id).with_for_update())).scalar_one_or_none()
     if quiz is None:
         raise HTTPException(404, "测评不存在")
@@ -68,9 +104,9 @@ async def retry_failed(db, quiz_id):
     latest = {}
     for job in jobs:
         latest[job.participant_id] = max(latest.get(job.participant_id, 0), job.round_no)
-    ids = [j.id for j in jobs if j.state == "failed" and j.round_no == latest[j.participant_id]]
+    ids = [j.id for j in jobs if j.state in ("failed", "cancelled") and j.round_no == latest[j.participant_id]]
     if ids:
-        await db.execute(update(GenerationJob).where(GenerationJob.id.in_(ids), GenerationJob.state == "failed")
+        await db.execute(update(GenerationJob).where(GenerationJob.id.in_(ids), GenerationJob.state.in_(["failed", "cancelled"]))
             .values(state="queued", attempts=0, error=None, available_at=datetime.now(timezone.utc)))
     await db.commit()
     return len(ids)
@@ -125,7 +161,7 @@ async def finish(db, settings, identity, *, result=None, raw=None, error=None):
     # A late response from a dead/replaced worker cannot overwrite a new run.
     if job.lease_token != token or job.state != "running":
         await db.execute(update(GenerationRun).where(GenerationRun.id == token)
-            .values(raw_response=raw, error="Late result ignored after lease reassignment"))
+            .values(raw_response=raw, error="Late result ignored after cancellation or lease reassignment"))
         await db.commit()
         return False
     await db.execute(update(GenerationRun).where(GenerationRun.id == token).values(
@@ -146,7 +182,7 @@ async def finish(db, settings, identity, *, result=None, raw=None, error=None):
 
 async def heartbeat(factory, settings, identity):
     while True:
-        await asyncio.sleep(settings.generation_lease_seconds / 3)
+        await asyncio.sleep(min(3, settings.generation_lease_seconds / 3))
         async with factory() as db:
             result = await db.execute(update(GenerationJob).where(GenerationJob.id == identity[0],
                 GenerationJob.lease_token == identity[1], GenerationJob.state == "running")
@@ -159,6 +195,10 @@ async def heartbeat(factory, settings, identity):
 async def run_claim(factory, settings, provider, identity):
     async def generate():
         async with factory() as db:
+            valid = await db.scalar(select(GenerationJob.id).where(GenerationJob.id == identity[0],
+                GenerationJob.lease_token == identity[1], GenerationJob.state == "running"))
+            if valid is None:
+                raise RuntimeError("Generation cancelled before request")
             snapshot = (await db.execute(select(SubmissionSnapshot).where(SubmissionSnapshot.id == identity[2])
                 .options(selectinload(SubmissionSnapshot.problem)))).scalar_one()
             payload = dict(title=snapshot.problem.title, statement=snapshot.problem.statement,

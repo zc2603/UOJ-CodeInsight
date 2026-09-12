@@ -20,7 +20,7 @@ async def test_cross_topic_runner_offline(tmp_path,monkeypatch):
             return result,result.model_dump_json()
         async def close(self):pass
     fake=Fake()
-    monkeypatch.setattr(runner,"get_settings",lambda:Settings(llm_provider="openai-compatible"))
+    monkeypatch.setattr(runner,"get_settings",lambda:Settings(llm_provider="openai-compatible",llm_model="deepseek-v4-pro"))
     monkeypatch.setattr(runner,"create_llm_provider",lambda settings:fake)
     await runner.run(tmp_path/"pro-run")
     report=json.loads((tmp_path/"pro-run/report.json").read_text(encoding="utf-8"))

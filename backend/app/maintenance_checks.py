@@ -27,6 +27,7 @@ def check_config() -> int:
     print(f"llm_provider={settings.llm_provider}")
     print(f"llm_model={settings.llm_model}")
     print(f"llm_reasoning_effort={settings.llm_reasoning_effort}")
+    print(f"llm_max_concurrency={settings.llm_max_concurrency}")
     print(f"grading_review_confidence_threshold={settings.grading_review_confidence_threshold}")
     print(f"generation_global_concurrency={settings.generation_global_concurrency}")
     print(f"generation_workers={settings.generation_workers}")
@@ -92,6 +93,10 @@ async def check_deepseek() -> int:
         ) as client:
             response = await client.get("models")
         if response.status_code == 200:
+            models = response.json().get("data", [])
+            if not any(item.get("id") == settings.llm_model for item in models):
+                print(f"deepseek=failed reason=model_not_listed model={settings.llm_model}")
+                return 1
             print(f"deepseek=ok model={settings.llm_model}")
             return 0
         print(f"deepseek=failed http_status={response.status_code}")

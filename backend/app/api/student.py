@@ -10,6 +10,7 @@ import jwt
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import StudentPrincipal, require_student
@@ -97,10 +98,15 @@ async def login(
             and settings.uoj_password_client_salt
             and repository is not None
         ):
-            valid_credential = await repository.verify_user_password(
-                payload.student_number,
-                payload.uoj_password_hash,
-            )
+            try:
+                valid_credential = await repository.verify_user_password(
+                    payload.student_number,
+                    payload.uoj_password_hash,
+                )
+            except SQLAlchemyError as exc:
+                # Do not log SQL parameters, usernames, hashes or connection details.
+                logger.warning("UOJ password verification unavailable: %s", type(exc).__name__)
+                raise HTTPException(503, "UOJ 账号验证暂不可用，请改用备用测评码或联系教师") from None
     if participant is None or not valid_credential:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "用户名或凭据错误")
 

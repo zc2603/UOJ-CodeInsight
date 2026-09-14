@@ -118,6 +118,9 @@ async def check_uoj() -> int:
     try:
         async with repository.engine.connect() as connection:
             result = await connection.scalar(text("SELECT 1"))
+            if settings.uoj_password_auth_enabled:
+                # Validate actual authentication column grants without reading user records.
+                await connection.execute(text("SELECT username, password, usergroup FROM user_info WHERE 1=0"))
         if result != 1:
             print("uoj=failed reason=unexpected_query_result")
             return 1

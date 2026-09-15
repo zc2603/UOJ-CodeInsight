@@ -22,6 +22,9 @@ services:
     env_file: ${APP_ENV_FILE:-.env}
     environment:
       LLM_MODEL: deepseek-flash
+      LLM_TIMEOUT_SECONDS: "360"
+      LLM_MAX_TOKENS: "100000"
+      GENERATION_TASK_TIMEOUT_SECONDS: "1200"
       LLM_MAX_CONCURRENCY: "25"
       GENERATION_GLOBAL_CONCURRENCY: "80"
       GENERATION_WORKERS: "20"
@@ -38,6 +41,9 @@ services:
     env_file: ${APP_ENV_FILE:-.env}
     environment:
       LLM_MODEL: deepseek-flash
+      LLM_TIMEOUT_SECONDS: "360"
+      LLM_MAX_TOKENS: "100000"
+      GENERATION_TASK_TIMEOUT_SECONDS: "1200"
       LLM_MAX_CONCURRENCY: "25"
       GENERATION_GLOBAL_CONCURRENCY: "80"
       GENERATION_WORKERS: "20"

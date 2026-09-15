@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-flash"
     llm_reasoning_effort: Literal["low", "high", "max"] = "max"
-    llm_timeout_seconds: float = 180.0
-    llm_max_tokens: int = 12_000
+    llm_timeout_seconds: float = 360.0
+    llm_max_tokens: int = 100_000
     # Per process, shared by generation and grading. Four production processes
     # allow up to 100 requests; their 80 generation loops leave grading headroom.
     llm_max_concurrency: int = Field(default=25, ge=1, le=200)
@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     generation_global_concurrency: int = Field(default=80, ge=1, le=100)
     generation_workers: int = Field(default=20, ge=1, le=20)
     generation_poll_seconds: float = Field(default=3, gt=0)
-    generation_task_timeout_seconds: float = Field(default=900, gt=0)
+    generation_task_timeout_seconds: float = Field(default=1200, gt=0)
     generation_lease_seconds: float = Field(default=90, gt=0)
     generation_max_attempts: int = Field(default=3, ge=1, le=5)
 

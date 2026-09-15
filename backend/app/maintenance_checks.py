@@ -27,6 +27,8 @@ def check_config() -> int:
     print(f"llm_provider={settings.llm_provider}")
     print(f"llm_model={settings.llm_model}")
     print(f"llm_reasoning_effort={settings.llm_reasoning_effort}")
+    print(f"llm_timeout_seconds={settings.llm_timeout_seconds}")
+    print(f"llm_max_tokens={settings.llm_max_tokens}")
     print(f"llm_max_concurrency={settings.llm_max_concurrency}")
     print(f"grading_review_confidence_threshold={settings.grading_review_confidence_threshold}")
     print(f"generation_global_concurrency={settings.generation_global_concurrency}")

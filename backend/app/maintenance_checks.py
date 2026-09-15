@@ -80,6 +80,9 @@ async def check_preparation_schema():
         assert revision == "0004_grading_review" and control == 1
         print(f"preparation_schema=ok revision={revision}")
         print("preparation_jobs=" + (",".join(f"{state}:{count}" for state, count in counts) or "empty"))
+        from app.generation_diagnostics import latest_generation
+        import json
+        print("latest_generation=" + json.dumps(await latest_generation(db), ensure_ascii=False))
 
 
 async def check_deepseek() -> int:

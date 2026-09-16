@@ -583,3 +583,25 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .source-line-numbers { display: block; flex: none; min-width: 3ch; text-align: right; color: #778398; border-right: 1px solid #dce2ea; padding-right: 12px; user-select: none; }
 .source-line-numbers > span { display: block; }
 .source-line-numbers > span::before { content: attr(data-line); }
+
+/* Original problem descriptions share the same layout in student and teacher views. */
+.markdown-statement, .review-material .markdown-statement { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+.markdown-statement > :first-child { margin-top: 0; }
+.markdown-statement > :last-child { margin-bottom: 0; }
+.markdown-statement p { margin: .8em 0; }
+.markdown-statement h1, .markdown-statement h2, .markdown-statement h3, .markdown-statement h4 { line-height: 1.45; margin: 1.3em 0 .6em; }
+.markdown-statement h1 { font-size: 1.5em; }
+.markdown-statement h2 { font-size: 1.3em; }
+.markdown-statement h3 { font-size: 1.15em; }
+.markdown-statement ul, .markdown-statement ol { padding-left: 1.6em; }
+.markdown-statement li { margin: .3em 0; }
+.markdown-statement pre { white-space: pre; overflow-x: auto; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f5f8f6; }
+.markdown-statement code { font-family: Consolas, monospace; font-size: .9em; }
+.markdown-statement :not(pre) > code { background: #edf2ef; padding: .1em .3em; border-radius: 4px; }
+.markdown-statement blockquote { margin: 1em 0; padding: .1em 1em; border-left: 3px solid #a9c7b8; color: var(--muted); }
+.markdown-statement table { display: block; max-width: 100%; overflow-x: auto; width: max-content; border-collapse: collapse; margin: 1em 0; }
+.markdown-statement th, .markdown-statement td { padding: 8px 12px; border: 1px solid var(--line); white-space: normal; }
+.markdown-statement img { max-width: 100%; height: auto; }
+.markdown-statement .katex-display { overflow-x: auto; overflow-y: hidden; padding: .3em 0; }
+.markdown-statement .katex { font-size: 1.1em; overflow-wrap: normal; }
+.markdown-statement a { color: var(--green-700); text-decoration: underline; }

@@ -5,6 +5,7 @@ import {
   RotateCcw, Search, ShieldCheck, Users, Trash2,
 } from "lucide-react";
 import { api } from "../api";
+import { ProblemStatement } from "../components/ProblemStatement";
 import { CodeBlock } from "../components/CodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { readableGeneratedQuestion } from "../generatedText";
@@ -647,7 +648,7 @@ export function AdminApp() {
           <header><div><button className="back" onClick={() => setView("results")}><ArrowLeft size={15} />返回测评结果</button><div className="eyebrow">QUESTION PREVIEW</div><h1 className="mono">{preparedDetail.student_number}</h1><p>已准备 {preparedDetail.prepared_problem_count} / {preparedDetail.preparation_total} 道题目，共 {preparedDetail.questions.length} 个问题</p></div><span className="status-pill status-ready">预生成题目</span></header>
           <div className="problem-review-list">{groupAttemptQuestions(preparedDetail.questions).map(group => <section className="card problem-review" key={group.problem.id}>
             <header><div><span className="problem-number">题目 {group.problem.id}</span><h2>{group.problem.title}</h2></div><span className="question-count">{group.questions.length} 个问题</span></header>
-            <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><div className="statement">{group.problem.statement}</div><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
+            <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><ProblemStatement className="statement" text={group.problem.statement} /><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
             <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
               <div className="question-title-row"><div className="question-index">问题 {index + 1}</div></div><h3>{readableGeneratedQuestion(question.question)}</h3>
               {question.question_en && <p className="question-en">{readableGeneratedQuestion(question.question_en)}</p>}
@@ -664,7 +665,7 @@ export function AdminApp() {
           <section className="detail-grid">
             <div className="problem-review-list">{attemptGroups.map(group => <section className="card problem-review" key={group.problem.id}>
               <header><div><span className="problem-number">题目 {group.problem.id}</span><h2>{group.problem.title}</h2></div><span className="question-count">{group.questions.length} 个问题</span></header>
-              <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><div className="statement">{group.problem.statement}</div><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
+              <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><ProblemStatement className="statement" text={group.problem.statement} /><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
               <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
                 <div className="question-title-row"><div className="question-index">问题 {index + 1}</div><span className="question-score">{attempt.review_required ? "建议 " : ""}{question.score ?? "—"} / 2</span></div>
                 <h3>{readableGeneratedQuestion(question.question)}</h3>

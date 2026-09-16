@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import md5 from "blueimp-md5";
 import { api } from "../api";
+import { ProblemStatement } from "../components/ProblemStatement";
 import { CodeBlock } from "../components/CodeBlock";
 import { readableGeneratedQuestion } from "../generatedText";
 import type { StudentQuestion } from "../types";
@@ -177,11 +178,11 @@ export function StudentApp({ quizId }: Props) {
     </header>
     <div className="global-progress" aria-label={`测评进度 ${Math.round(progress)}%`}><i style={{ width: `${progress}%` }} /></div>
     <section className="material-panel">
-      <article className="problem-panel"><div className="material-title">题目描述</div><div className="problem-statement">{question?.problem_statement}</div></article>
+      <article className="problem-panel"><div className="material-title">题目描述</div><ProblemStatement className="problem-statement" text={question?.problem_statement ?? ""} /></article>
       <section className="code-panel"><div className="panel-title">本人提交代码 <span>{question?.language}</span></div><CodeBlock code={question?.source_code || ""} /></section>
     </section>
     <section className="answer-panel">
-      <div className="question-heading"><span className="question-type">{questionTypeLabel(question?.question_type)}</span><span className="question-sequence">问题 {question?.question_index} / {question?.question_count}</span>{question?.question_text_en && <button type="button" className="text-button language-toggle" onClick={() => setShowEnglish(!showEnglish)}><Languages size={15} />{showEnglish ? "隐藏英文" : "显示英文对照"}</button>}</div>
+      <div className="question-heading"><span className="question-type">{questionTypeLabel(question?.question_type)}</span><span className="question-sequence">问题 {question?.question_index} / {question?.question_count}</span>{question?.question_text_en && <button type="button" className="text-button language-toggle" onClick={() => setShowEnglish(!showEnglish)}><Languages size={15} />{showEnglish ? "Hide English" : "Show English"}</button>}</div>
       <h2>{readableGeneratedQuestion(question?.question_text)}</h2>
       {showEnglish && question?.question_text_en && <p className="question-en">{readableGeneratedQuestion(question.question_text_en)}</p>}
       <form className="answer-form" onSubmit={submit}>

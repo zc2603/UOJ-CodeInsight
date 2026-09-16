@@ -344,6 +344,24 @@ export function AdminApp() {
     });
   }
 
+  function reopenQuiz(quiz: QuizSummary) {
+    setConfirm({
+      title: "重新开放这场测评？",
+      description: "确认后，最后进入时间将设为当前时间的 30 分钟后。已有题目、作答和成绩会保留；已提交的学生不会重新开始作答。",
+      confirmLabel: "重新开放",
+      action: async () => {
+        setBusy(true);
+        setMessage("");
+        try {
+          await api(`/api/admin/quizzes/${quiz.id}/reopen`, { method: "POST" });
+          await loadQuizzes();
+          setToast("测评已重新开放，学生可在 30 分钟内进入");
+        } catch (error) { setMessage((error as Error).message); }
+        finally { setBusy(false); }
+      },
+    });
+  }
+
   function regenerateCode(quiz: QuizSummary) {
     setConfirm({
       title: "重新生成备用测评码？",
@@ -557,7 +575,7 @@ export function AdminApp() {
                   <td>{quiz.status.toUpperCase() === "DRAFT" ? "开放后 30 分钟" : formatDate(quiz.end_time)}</td>
                   <td><div className="table-progress"><span><strong>{quiz.finished_count}</strong> / {quiz.participant_count}</span><i><b style={{ width: `${progress}%` }} /></i></div></td>
                   <td><strong>{quiz.average_score !== null ? `${quiz.average_score.toFixed(1)}%` : "—"}</strong></td>
-                  <td className="actions-cell"><div className="actions"><button className="link primary-link" onClick={() => void showResults(quiz)}>查看结果</button><details className="action-menu" name="quiz-actions"><summary aria-label="更多操作"><MoreHorizontal size={18} /></summary><div onClick={event => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; }}><button onClick={() => void copyText(studentLink(quiz.id), "学生链接已复制")}><Copy size={15} />复制学生链接</button><button disabled={busy} onClick={() => regenerateCode(quiz)}><RefreshCw size={15} />生成备用码</button><button className="delete-quiz" disabled={busy} onClick={() => deleteQuiz(quiz)}><Trash2 size={15} />删除此测评</button></div></details></div></td>
+                  <td className="actions-cell"><div className="actions"><button className="link primary-link" onClick={() => void showResults(quiz)}>查看结果</button><details className="action-menu" name="quiz-actions"><summary aria-label="更多操作"><MoreHorizontal size={18} /></summary><div onClick={event => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; }}><button onClick={() => void copyText(studentLink(quiz.id), "学生链接已复制")}><Copy size={15} />复制学生链接</button><button disabled={busy} onClick={() => regenerateCode(quiz)}><RefreshCw size={15} />生成备用码</button>{["CLOSED", "ACTIVE"].includes(quiz.status.toUpperCase()) && <button disabled={busy} onClick={() => reopenQuiz(quiz)}><RotateCcw size={15} />重新开放测评</button>}<button className="delete-quiz" disabled={busy} onClick={() => deleteQuiz(quiz)}><Trash2 size={15} />删除此测评</button></div></details></div></td>
                 </tr>;
               })}</tbody>
             </table> : <div className="empty-state"><div className="empty-symbol"><ClipboardList size={27} /></div><h2>还没有测评</h2><p>创建第一场测评后，这里会显示学生进入、作答和评分进度。</p><button onClick={() => setView("create")}><Plus size={16} />创建第一场测评</button></div>}

@@ -45,7 +45,7 @@ from app.security import create_token, generate_quiz_code, hash_secret, verify_s
 from app.services.grading_service import grade_attempt
 from app.services.quiz_service import persist_quiz, preview_from_bundle, reset_attempt
 from app.time_utils import ensure_utc
-from app.services.generation_service import open_quiz, retry_failed, summarize, stop_preparation
+from app.services.generation_service import open_quiz, reopen_quiz, retry_failed, summarize, stop_preparation
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -254,6 +254,12 @@ async def delete_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 @router.post("/quizzes/{quiz_id}/open", dependencies=[Depends(require_admin)])
 async def publish_quiz(quiz_id: uuid.UUID, payload: QuizOpenRequest = Body(default=QuizOpenRequest()), db: AsyncSession = Depends(get_db)):
     quiz = await open_quiz(db, quiz_id, confirm_partial=payload.confirm_partial)
+    return {"status": quiz.status, "start_time": quiz.start_time, "end_time": quiz.end_time}
+
+
+@router.post("/quizzes/{quiz_id}/reopen", dependencies=[Depends(require_admin)])
+async def reopen_published_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    quiz = await reopen_quiz(db, quiz_id)
     return {"status": quiz.status, "start_time": quiz.start_time, "end_time": quiz.end_time}
 
 

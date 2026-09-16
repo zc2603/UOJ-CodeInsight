@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.models import GenerationControl, GenerationJob, GenerationRun, Quiz, QuizStatus, SubmissionSnapshot
 from app.services.llm_provider import GENERATOR_VERSION
 from app.services.question_policy import allocated_kind
+from app.time_utils import ensure_utc
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,23 @@ async def open_quiz(db, quiz_id, *, confirm_partial=False):
             raise HTTPException(409, "尚无学生的整套问题准备完成，暂不能发布")
         await stop_pending(db, quiz_id)
     now = datetime.now(timezone.utc)
+    quiz.status = QuizStatus.PUBLISHED
+    quiz.start_time = now
+    quiz.end_time = now + timedelta(minutes=30)
+    await db.commit()
+    return quiz
+
+
+async def reopen_quiz(db, quiz_id):
+    quiz = (await db.execute(select(Quiz).where(Quiz.id == quiz_id).with_for_update()
+        .execution_options(populate_existing=True))).scalar_one_or_none()
+    if quiz is None:
+        raise HTTPException(404, "测评不存在")
+    if quiz.status == QuizStatus.DRAFT:
+        raise HTTPException(409, "尚未发布的测评请通过开放测评入口发布")
+    now = datetime.now(timezone.utc)
+    if ensure_utc(quiz.end_time) > now:
+        raise HTTPException(409, "测评仍在开放中，请刷新页面")
     quiz.status = QuizStatus.PUBLISHED
     quiz.start_time = now
     quiz.end_time = now + timedelta(minutes=30)

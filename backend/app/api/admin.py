@@ -36,6 +36,7 @@ from app.schemas.api import (
     ManualOverrideRequest,
     QuizCreateRequest,
     QuizOpenRequest,
+    RegeneratePreparedRequest,
     QuizCreatedResponse,
     QuizPreviewRequest,
     QuizSummary,
@@ -45,7 +46,7 @@ from app.security import create_token, generate_quiz_code, hash_secret, verify_s
 from app.services.grading_service import grade_attempt
 from app.services.quiz_service import persist_quiz, preview_from_bundle, reset_attempt
 from app.time_utils import ensure_utc
-from app.services.generation_service import open_quiz, reopen_quiz, retry_failed, summarize, stop_preparation
+from app.services.generation_service import open_quiz, reopen_quiz, regenerate_prepared, retry_failed, summarize, stop_preparation
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -390,6 +391,12 @@ async def prepared_questions(quiz_id: uuid.UUID, student_number: str, db: AsyncS
                 student_answer=None, score=None, reason=None, confidence=None))
     return dict(student_number=student_number, round_no=round_no, prepared_problem_count=len(questions) // 2,
         preparation_total=len(jobs), questions=questions)
+
+
+@router.post("/quizzes/{quiz_id}/students/{student_number}/regenerate-questions", dependencies=[Depends(require_admin)])
+async def regenerate_prepared_questions(quiz_id: uuid.UUID, student_number: str,
+    payload: RegeneratePreparedRequest, db: AsyncSession = Depends(get_db)):
+    return await regenerate_prepared(db, quiz_id, student_number, payload.expected_round)
 
 
 @router.get("/attempts/{attempt_id}", dependencies=[Depends(require_admin)])

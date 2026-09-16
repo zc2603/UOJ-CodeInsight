@@ -73,6 +73,10 @@ class QuizCreatedResponse(BaseModel):
     status: QuizStatus
 
 
+class RegeneratePreparedRequest(BaseModel):
+    expected_round: int = Field(ge=1)
+
+
 class QuizOpenRequest(BaseModel):
     confirm_partial: bool = False
 

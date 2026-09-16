@@ -268,7 +268,10 @@ async def start_attempt(
         )
 
     if quiz.pre_generate:
-        round_no = (latest.attempt_no + 1) if latest else 1
+        round_no = await db.scalar(select(func.max(GenerationJob.round_no)).where(
+            GenerationJob.participant_id == participant.id))
+        if round_no is None or (latest is not None and round_no <= latest.attempt_no):
+            raise HTTPException(409, "你的问题尚未准备完成，请联系教师")
         jobs = (await db.execute(select(GenerationJob).where(
             GenerationJob.participant_id == participant.id, GenerationJob.round_no == round_no)
             .order_by(GenerationJob.submission_snapshot_id))).scalars().all()

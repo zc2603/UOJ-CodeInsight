@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
-from app.models import GenerationControl, GenerationJob, GenerationRun, Quiz, QuizStatus, SubmissionSnapshot
+from app.models import Attempt, AttemptStatus, QuizParticipant, GenerationControl, GenerationJob, GenerationRun, Quiz, QuizStatus, SubmissionSnapshot
 from app.services.llm_provider import GENERATOR_VERSION
 from app.services.question_policy import allocated_kind
 from app.time_utils import ensure_utc
@@ -111,6 +111,35 @@ async def reopen_quiz(db, quiz_id):
     quiz.end_time = now + timedelta(minutes=30)
     await db.commit()
     return quiz
+
+
+async def regenerate_prepared(db, quiz_id, student_number, expected_round):
+    await db.execute(select(GenerationControl).where(GenerationControl.id == 1).with_for_update())
+    participant = await db.scalar(select(QuizParticipant).where(
+        QuizParticipant.quiz_id == quiz_id, QuizParticipant.student_number == student_number).with_for_update())
+    if participant is None:
+        raise HTTPException(404, "学生不属于本场测评")
+    quiz = await db.get(Quiz, quiz_id)
+    if not quiz.pre_generate:
+        raise HTTPException(409, "本场测评不支持预生成题目")
+    latest = await db.scalar(select(Attempt).where(Attempt.participant_id == participant.id)
+        .order_by(Attempt.attempt_no.desc()).limit(1))
+    if latest is not None and latest.status != AttemptStatus.RESET:
+        raise HTTPException(409, "学生已开始或提交作答，不能重新生成预生成题目")
+    round_no = await db.scalar(select(func.max(GenerationJob.round_no)).where(GenerationJob.participant_id == participant.id))
+    if round_no is None or round_no != expected_round:
+        raise HTTPException(409, "题目已更新，请刷新后重试")
+    pending = await db.scalar(select(GenerationJob.id).where(GenerationJob.participant_id == participant.id,
+        GenerationJob.round_no == round_no, GenerationJob.state.in_(["queued", "running"])).limit(1))
+    if pending is not None:
+        raise HTTPException(409, "该学生的问题正在生成，请等待完成后再操作")
+    snapshots = (await db.execute(select(SubmissionSnapshot).where(
+        SubmissionSnapshot.participant_id == participant.id, SubmissionSnapshot.uoj_score > 0))).scalars().all()
+    if not snapshots:
+        raise HTTPException(409, "没有可用于出题的有效提交")
+    await enqueue(db, snapshots, round_no=round_no + 1)
+    await db.commit()
+    return {"round_no": round_no + 1, "queued": len(snapshots)}
 
 
 async def retry_failed(db, quiz_id):

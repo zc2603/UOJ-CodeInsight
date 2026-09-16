@@ -138,8 +138,7 @@ async def test_incomplete_modification_reference_is_rejected():
         generation_schema("modification").model_validate(data)
     data["questions"][1]["reference_answer"] = "输出 n-p+1"
     data["questions"][1]["question"] = "删除第4行的 moves 初始化"
-    with pytest.raises(ValidationError):
-        generation_schema("modification").model_validate(data)
+    generation_schema("modification", "// code\n\nint main() {\nint moves = 0;\n}").model_validate(data)
 
 
 @pytest.mark.asyncio
@@ -195,3 +194,8 @@ async def test_review_gate_does_not_issue_extra_requests():
     finally:
         await provider.close()
     assert len(calls) == 1
+
+
+def test_source_line_numbers_preserve_blank_lines_and_line_endings():
+    from app.services.llm_provider import number_source_lines
+    assert number_source_lines("a\r\n\r\nb\rc\n") == "1 | a\n2 | \n3 | b\n4 | c\n5 | "

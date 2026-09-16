@@ -14,7 +14,7 @@ from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGene
 
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
-GENERATOR_VERSION = "question_generator_v11"
+GENERATOR_VERSION = "question_generator_v12"
 GRADER_VERSION = "grader_v8"
 
 KIND_RULES = {
@@ -22,6 +22,11 @@ KIND_RULES = {
     "boundary": "围绕合法输入域或数据结构的一项边界性质，询问一个行为或原因。type=boundary。",
     "modification": "要求一项范围清楚、规模很小的代码调整，说明预期行为以及应保持不变的条件。type=modification。",
 }
+
+
+def number_source_lines(source_code: str) -> str:
+    normalized = source_code.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(f"{index} | {line}" for index, line in enumerate(normalized.split("\n"), 1))
 
 
 def generation_schema(kind, source_code=None):
@@ -37,8 +42,6 @@ def generation_schema(kind, source_code=None):
                 raise ValueError("Second question must match the assigned kind")
             if re.search(r"=\s*\?\s*;|\bTODO\b|\bFIXME\b", second.reference_answer):
                 raise ValueError("Reference answer contains unfinished code")
-            if kind == "modification" and re.search(r"第\s*\d+\s*行|\blines?\s+\d+", second.question + "\n" + second.question_en, re.I):
-                raise ValueError("Modification must locate code by content, not unprovided line numbers")
             if source_code is not None:
                 headers = {re.sub(r"\s+", "", h) for h in re.findall(r"\bfor\s*\([^()]*\)", source_code)}
                 for question in self.questions:
@@ -270,7 +273,8 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 语言（JSON 字符串）：{encode_untrusted(language)}
 
 <STUDENT_CODE>
-{encode_untrusted(source_code)}
+源码按原始行编号（从 1 开始，含空行）；每行左侧的“行号 | ”仅用于定位，不属于代码。
+{encode_untrusted(number_source_lines(source_code))}
 </STUDENT_CODE>
 
 输出对象必须含 questions 数组，严格为两题；每题含 index、type、question、question_en、reference_answer、grading_points。第二题额外含 second_kind，值必须为 {second_question_kind}。
@@ -305,7 +309,8 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 
 语言（JSON 字符串）：{encode_untrusted(language)}
 <STUDENT_CODE>
-{encode_untrusted(source_code)}
+源码按原始行编号（从 1 开始，含空行）；每行左侧的“行号 | ”仅用于定位，不属于代码。
+{encode_untrusted(number_source_lines(source_code))}
 </STUDENT_CODE>
 
 {chr(10).join(blocks)}

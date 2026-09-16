@@ -576,3 +576,10 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .roster-names > div { display: flex; flex-wrap: wrap; gap: 6px; max-height: 160px; overflow: auto; margin-top: 10px; }
 .roster-names code { padding: 4px 8px; background: white; border: 1px solid var(--line); border-radius: 5px; overflow-wrap: anywhere; }
 .roster-error { color: #b42318; font-size: 13px; line-height: 1.7; }
+
+/* Number gutter shares the code scroll container and line metrics. */
+.source-code { display: flex; gap: 18px; }
+.source-code > code { display: block; flex: 1; font: inherit; }
+.source-line-numbers { display: block; flex: none; min-width: 3ch; text-align: right; color: #778398; border-right: 1px solid #dce2ea; padding-right: 12px; user-select: none; }
+.source-line-numbers > span { display: block; }
+.source-line-numbers > span::before { content: attr(data-line); }

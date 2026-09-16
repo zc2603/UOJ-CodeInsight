@@ -9,11 +9,12 @@ function tokenClass(token: string): string {
 }
 
 export function CodeBlock({ code, language }: { code: string; language?: string }) {
-  const parts = code.split(TOKEN_PATTERN);
+  const normalized = code.replace(/\r\n?/g, "\n");
+  const parts = normalized.split(TOKEN_PATTERN);
   return (
     <div className="source-wrap">
       {language && <div className="source-language">{language}</div>}
-      <pre className="source-code"><code>{parts.map((part, index) =>
+      <pre className="source-code"><span className="source-line-numbers" aria-hidden="true">{normalized.split("\n").map((_, index) => <span key={index} data-line={index + 1} />)}</span><code>{parts.map((part, index) =>
         IS_TOKEN.test(part)
           ? <span className={tokenClass(part)} key={index}>{part}</span>
           : <span key={index}>{part}</span>

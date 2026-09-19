@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 import jwt
-from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import StudentPrincipal, require_student
 from app.config import get_settings
-from app.database import SessionLocal, get_db
+from app.database import get_db
 from app.models import GenerationJob, Attempt, AttemptStatus, Question, Quiz, QuizParticipant, QuizParticipantStatus, QuizStatus
 from app.schemas.api import (
     AnswerSubmitRequest,
@@ -25,7 +25,6 @@ from app.schemas.api import (
     StudentResultResponse,
 )
 from app.security import create_token, decode_token, verify_secret
-from app.services.grading_service import grade_attempt
 from app.services.question_service import get_current_attempt, submit_answer, save_draft
 from app.services.quiz_service import _attempt_view, start_attempt
 from app.time_utils import ensure_utc
@@ -52,17 +51,6 @@ async def login_options(quiz_id: uuid.UUID, request: Request) -> dict[str, bool 
         ),
         "backup_code_enabled": True,
     }
-
-
-async def _grade_in_background(provider, attempt_id: uuid.UUID) -> None:
-    """Grade after the submission response, using a session independent of the request."""
-    async with SessionLocal() as db:
-        try:
-            await grade_attempt(db, provider, attempt_id)
-        except Exception:
-            # grade_attempt records GRADING_ERROR before re-raising. Keep the
-            # exception out of the response lifecycle and retain it in logs.
-            logger.exception("Background grading failed for attempt %s", attempt_id)
 
 
 @router.post("/api/quiz/{quiz_id}/login")
@@ -229,7 +217,6 @@ async def draft(payload: DraftSaveRequest, principal: StudentPrincipal = Depends
 async def answer(
     payload: AnswerSubmitRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
     principal: StudentPrincipal = Depends(require_student),
     db: AsyncSession = Depends(get_db),
 ):
@@ -242,9 +229,6 @@ async def answer(
         student_answer=payload.answer,
     )
     if isinstance(result, Attempt):
-        background_tasks.add_task(
-            _grade_in_background, request.app.state.llm_provider, result.id
-        )
         return {"status": result.status, "submitted": True}
     return result
 

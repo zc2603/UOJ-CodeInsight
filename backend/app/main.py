@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.services.attempt_maintenance import maintain_attempts
 from app.services.generation_service import generation_worker
-from app.services.timeout_grading import timeout_worker
+from app.services.grading_queue import grading_worker
 from app.integrations.uoj import UOJRepository, UOJSubmissionArchiveClient
 from app.services.import_service import ImportService
 from app.services.llm_provider import create_llm_provider
@@ -28,7 +28,8 @@ async def lifespan(app: FastAPI):
         app.state.uoj_repository = repository
         app.state.import_service = ImportService(settings, repository, archive_client)
     maintenance = asyncio.create_task(maintain_attempts(SessionLocal, settings))
-    timeout_grader = asyncio.create_task(timeout_worker(SessionLocal, settings, app.state.llm_provider))
+    graders = [asyncio.create_task(grading_worker(SessionLocal, settings, app.state.llm_provider))
+        for _ in range(settings.grading_workers)]
     generators = [asyncio.create_task(generation_worker(SessionLocal, settings, app.state.llm_provider))
         for _ in range(settings.generation_workers)]
     try:
@@ -37,8 +38,9 @@ async def lifespan(app: FastAPI):
         for worker in generators:
             worker.cancel()
         await asyncio.gather(*generators, return_exceptions=True)
-        timeout_grader.cancel()
-        await asyncio.gather(timeout_grader, return_exceptions=True)
+        for worker in graders:
+            worker.cancel()
+        await asyncio.gather(*graders, return_exceptions=True)
         maintenance.cancel()
         with suppress(asyncio.CancelledError):
             await maintenance

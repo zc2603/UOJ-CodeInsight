@@ -34,8 +34,8 @@ async def grade_attempt(
     ).scalar_one()
     if lease_token is not None and (attempt.grading_token != lease_token or attempt.status != AttemptStatus.GRADING):
         return attempt
-    if lease_token is None and attempt.timed_out and attempt.status == AttemptStatus.GRADING and attempt.grading_token:
-        raise ValueError("超时作答正在自动评分，请稍后查看")
+    if lease_token is None and attempt.status == AttemptStatus.GRADING and attempt.grading_token:
+        raise ValueError("作答正在自动评分，请稍后查看")
     if not attempt.questions or any(item.answer is None for item in attempt.questions):
         raise ValueError("attempt does not have all submitted answers")
 
@@ -76,10 +76,10 @@ async def grade_attempt(
 
     # Do not occupy a database connection while an external model call is in flight.
     await db.commit()
+    tasks = [asyncio.create_task(grade_problem(snapshot, questions))
+        for snapshot, questions in grouped.values()]
     try:
-        graded_sets = await asyncio.gather(
-            *(grade_problem(snapshot, questions) for snapshot, questions in grouped.values())
-        )
+        graded_sets = await asyncio.gather(*tasks)
     except Exception as exc:
         locked = (
             await db.execute(select(Attempt).where(Attempt.id == attempt_id).with_for_update().execution_options(populate_existing=True))
@@ -103,6 +103,10 @@ async def grade_attempt(
         )
         await db.commit()
         raise
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     locked = (
         await db.execute(

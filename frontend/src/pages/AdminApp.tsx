@@ -462,7 +462,7 @@ export function AdminApp() {
     try {
       await api(`/api/admin/attempts/${attempt.id}/regrade`, { method: "POST" });
       await loadAttempt(attempt.id);
-      setToast("重新评分已完成");
+      setToast("已加入评分队列，请稍后刷新查看结果");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {

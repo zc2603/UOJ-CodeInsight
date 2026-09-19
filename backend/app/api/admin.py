@@ -43,7 +43,7 @@ from app.schemas.api import (
     ResultRow,
 )
 from app.security import create_token, generate_quiz_code, hash_secret, verify_secret
-from app.services.grading_service import grade_attempt
+from app.services.grading_queue import enqueue_regrade
 from app.services.quiz_service import persist_quiz, preview_from_bundle, reset_attempt
 from app.time_utils import ensure_utc
 from app.services.generation_service import open_quiz, reopen_quiz, regenerate_prepared, retry_failed, summarize, stop_preparation
@@ -474,10 +474,10 @@ async def regrade(
     attempt_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db)
 ):
     try:
-        attempt = await grade_attempt(db, request.app.state.llm_provider, attempt_id)
+        attempt = await enqueue_regrade(db, attempt_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    return {"ok": True, "auto_score": attempt.auto_score}
+    return {"ok": True, "status": attempt.status}
 
 
 @router.patch("/attempts/{attempt_id}/score", dependencies=[Depends(require_admin)])

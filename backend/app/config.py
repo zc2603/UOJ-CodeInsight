@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     llm_max_concurrency: int = Field(default=25, ge=1, le=200)
     grading_review_confidence_threshold: float = Field(default=0.75, ge=0, le=1)
 
+    grading_workers: int = Field(default=4, ge=1, le=20)
+    grading_poll_seconds: float = Field(default=3, gt=0)
+    grading_task_timeout_seconds: float = Field(default=1200, gt=0)
+
     generation_global_concurrency: int = Field(default=80, ge=1, le=100)
     generation_workers: int = Field(default=20, ge=1, le=20)
     generation_poll_seconds: float = Field(default=3, gt=0)

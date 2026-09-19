@@ -28,6 +28,9 @@ services:
       LLM_MAX_CONCURRENCY: "25"
       GENERATION_GLOBAL_CONCURRENCY: "80"
       GENERATION_WORKERS: "20"
+      GRADING_WORKERS: "4"
+      GRADING_POLL_SECONDS: "3"
+      GRADING_TASK_TIMEOUT_SECONDS: "1200"
     command: ["alembic", "upgrade", "head"]
     depends_on:
       postgres:
@@ -47,6 +50,9 @@ services:
       LLM_MAX_CONCURRENCY: "25"
       GENERATION_GLOBAL_CONCURRENCY: "80"
       GENERATION_WORKERS: "20"
+      GRADING_WORKERS: "4"
+      GRADING_POLL_SECONDS: "3"
+      GRADING_TASK_TIMEOUT_SECONDS: "1200"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -125,6 +125,10 @@ class StudentLoginRequest(BaseModel):
 
 
 class StudentQuestionResponse(BaseModel):
+    timed_out: bool = False
+    draft_answer: str = ""
+    draft_revision: int = 0
+    server_time: datetime | None = None
     attempt_id: uuid.UUID
     status: AttemptStatus
     problem_id: int
@@ -139,6 +143,12 @@ class StudentQuestionResponse(BaseModel):
     question_type: QuestionType | None
     question_text: str | None
     question_text_en: str | None
+
+
+class DraftSaveRequest(BaseModel):
+    question_index: int = Field(ge=1, le=200)
+    answer: str = Field(max_length=5000)
+    revision: int = Field(ge=1, le=9007199254740991)
 
 
 class AnswerSubmitRequest(BaseModel):
@@ -160,6 +170,7 @@ class ManualOverrideRequest(BaseModel):
 
 
 class ResultRow(BaseModel):
+    timed_out: bool = False
     review_required: bool = False
     prepared_problem_count: int = 0
     preparation_total: int = 0

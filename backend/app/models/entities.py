@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     JSON,
     Boolean,
+    BigInteger,
     DateTime,
     Enum,
     Float,
@@ -162,6 +163,12 @@ class SubmissionSnapshot(Base):
 
 
 class Attempt(Base):
+    timed_out: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    draft_text: Mapped[str | None] = mapped_column(Text)
+    draft_question_index: Mapped[int | None] = mapped_column(Integer)
+    draft_revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    grading_token: Mapped[str | None] = mapped_column(String(36))
+    grading_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __tablename__ = "attempts"
     __table_args__ = (
         UniqueConstraint("participant_id", "attempt_no"),

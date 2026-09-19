@@ -8,6 +8,10 @@ export type AttemptStatus =
   | "GRADING_ERROR";
 
 export interface StudentQuestion {
+  timed_out: boolean;
+  draft_answer: string;
+  draft_revision: number;
+  server_time: string | null;
   attempt_id: string;
   status: AttemptStatus;
   problem_id: number;
@@ -45,6 +49,7 @@ export interface QuizSummary {
 }
 
 export interface ResultRow {
+  timed_out: boolean;
   review_required: boolean;
   prepared_problem_count: number;
   preparation_total: number;

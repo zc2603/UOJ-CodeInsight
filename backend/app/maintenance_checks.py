@@ -77,7 +77,10 @@ async def check_preparation_schema():
         counts = (await db.execute(text("SELECT state, COUNT(*) FROM generation_jobs GROUP BY state"))).all()
         await db.execute(text("SELECT review_required FROM attempts LIMIT 0"))
         await db.execute(text("SELECT review_required, review_reason, question_validity FROM answers LIMIT 0"))
-        assert revision == "0004_grading_review" and control == 1
+        await db.execute(text("SELECT draft_text, draft_revision, grading_token, grading_lease_until FROM attempts LIMIT 0"))
+        timeout_counts = (await db.execute(text("SELECT status, COUNT(*) FROM attempts WHERE timed_out = true OR status = 'EXPIRED' GROUP BY status"))).all()
+        print("timeout_submissions=" + (",".join(f"{state}:{count}" for state, count in timeout_counts) or "empty"))
+        assert revision == "0005_timeout_submission" and control == 1
         print(f"preparation_schema=ok revision={revision}")
         print("preparation_jobs=" + (",".join(f"{state}:{count}" for state, count in counts) or "empty"))
         from app.generation_diagnostics import latest_generation

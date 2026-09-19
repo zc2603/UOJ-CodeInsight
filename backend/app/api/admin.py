@@ -339,6 +339,7 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
                 participant_status=participant.status,
                 attempt_id=attempt.id if attempt else None,
                 attempt_status=attempt.status if attempt else None,
+                timed_out=bool(attempt and (attempt.timed_out or attempt.status == AttemptStatus.EXPIRED)),
                 prepared_problem_count=prepared_counts.get(participant.id, 0),
                 preparation_total=preparation_totals.get(participant.id, 0),
                 problem_count=problem_count if attempt else preparation_totals.get(participant.id, 0),

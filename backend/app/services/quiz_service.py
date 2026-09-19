@@ -179,6 +179,10 @@ async def _attempt_view(db: AsyncSession, attempt_id: uuid.UUID) -> StudentQuest
         )
     return StudentQuestionResponse(
         attempt_id=attempt.id,
+        server_time=datetime.now(timezone.utc),
+        draft_revision=attempt.draft_revision,
+        timed_out=attempt.timed_out or attempt.status == AttemptStatus.EXPIRED,
+        draft_answer=(attempt.draft_text or "") if current and current.question_index == attempt.draft_question_index else "",
         status=attempt.status,
         problem_id=snapshot.uoj_problem_id,
         problem_title=snapshot.problem.title,

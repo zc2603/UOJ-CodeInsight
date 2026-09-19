@@ -19,13 +19,14 @@ from app.database import SessionLocal, get_db
 from app.models import GenerationJob, Attempt, AttemptStatus, Question, Quiz, QuizParticipant, QuizParticipantStatus, QuizStatus
 from app.schemas.api import (
     AnswerSubmitRequest,
+    DraftSaveRequest,
     StudentLoginRequest,
     StudentQuestionResponse,
     StudentResultResponse,
 )
 from app.security import create_token, decode_token, verify_secret
 from app.services.grading_service import grade_attempt
-from app.services.question_service import get_current_attempt, submit_answer
+from app.services.question_service import get_current_attempt, submit_answer, save_draft
 from app.services.quiz_service import _attempt_view, start_attempt
 from app.time_utils import ensure_utc
 
@@ -217,6 +218,13 @@ async def current_attempt(
     return await _attempt_view(db, attempt.id)
 
 
+@router.put("/api/attempt/current/draft")
+async def draft(payload: DraftSaveRequest, principal: StudentPrincipal = Depends(require_student), db: AsyncSession = Depends(get_db)):
+    return await save_draft(db, quiz_id=principal.quiz_id, student_number=principal.student_number,
+        session_id=principal.session_id, question_index=payload.question_index,
+        student_answer=payload.answer, revision=payload.revision)
+
+
 @router.post("/api/attempt/current/answer")
 async def answer(
     payload: AnswerSubmitRequest,
@@ -267,7 +275,7 @@ async def result(
     )
     return StudentResultResponse(
         status=attempt.status,
-        submitted=finished or attempt.status == AttemptStatus.GRADING_ERROR,
+        submitted=attempt.status in {AttemptStatus.FINISHED, AttemptStatus.GRADING_ERROR, AttemptStatus.GRADING, AttemptStatus.EXPIRED},
         score_visible=score_ready and quiz.show_score_after_finish,
         total_score=score if score_ready and quiz.show_score_after_finish else None,
         max_score=int(question_count or 0) * 2,

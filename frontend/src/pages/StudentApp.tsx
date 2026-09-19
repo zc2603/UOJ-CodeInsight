@@ -7,7 +7,6 @@ import md5 from "blueimp-md5";
 import { api } from "../api";
 import { ProblemStatement } from "../components/ProblemStatement";
 import { CodeBlock } from "../components/CodeBlock";
-import { readableGeneratedQuestion } from "../generatedText";
 import type { StudentQuestion } from "../types";
 
 interface Props { quizId: string }
@@ -241,8 +240,8 @@ export function StudentApp({ quizId }: Props) {
     </section>
     <section className="answer-panel">
       <div className="question-heading"><span className="question-type">{questionTypeLabel(question?.question_type)}</span><span className="question-sequence">问题 {question?.question_index} / {question?.question_count}</span>{question?.question_text_en && <button type="button" className="text-button language-toggle" onClick={() => setShowEnglish(!showEnglish)}><Languages size={15} />{showEnglish ? "Hide English" : "Show English"}</button>}</div>
-      <h2>{readableGeneratedQuestion(question?.question_text)}</h2>
-      {showEnglish && question?.question_text_en && <p className="question-en">{readableGeneratedQuestion(question.question_text_en)}</p>}
+      <ProblemStatement className="generated-question" text={question?.question_text ?? ""} />
+      {showEnglish && question?.question_text_en && <ProblemStatement className="question-en" text={question.question_text_en} />}
       <form className="answer-form" onSubmit={submit}>
         <label className="answer-label">你的回答<textarea disabled={secondsLeft === 0 || busy} value={answer} onChange={event => setAnswer(event.target.value)} maxLength={5000} placeholder="请结合左侧题目和代码，简洁回答当前问题。" required /></label>
         {message && <div className="error" role="alert">{message}</div>}

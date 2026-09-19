@@ -605,3 +605,9 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .markdown-statement .katex-display { overflow-x: auto; overflow-y: hidden; padding: .3em 0; }
 .markdown-statement .katex { font-size: 1.1em; overflow-wrap: normal; }
 .markdown-statement a { color: var(--green-700); text-decoration: underline; }
+
+/* Generated prompts may contain paragraphs, lists, code and display math. */
+.generated-question { margin: 16px 0; font-size: 16px; line-height: 1.85; }
+.answer-panel .generated-question { font-size: 18px; }
+.generated-question pre, .generated-question table { max-width: 100%; }
+.markdown-statement.question-en { white-space: normal; }

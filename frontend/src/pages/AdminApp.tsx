@@ -8,7 +8,6 @@ import { api } from "../api";
 import { ProblemStatement } from "../components/ProblemStatement";
 import { CodeBlock } from "../components/CodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { readableGeneratedQuestion } from "../generatedText";
 import type { AttemptDetail, AttemptQuestionDetail, QuizSummary, ResultRow, PreparedDetail } from "../types";
 
 type View = "list" | "create" | "results" | "attempt" | "preparation";
@@ -674,8 +673,8 @@ export function AdminApp() {
             <header><div><span className="problem-number">题目 {group.problem.id}</span><h2>{group.problem.title}</h2></div><span className="question-count">{group.questions.length} 个问题</span></header>
             <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><ProblemStatement className="statement" text={group.problem.statement} /><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
             <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
-              <div className="question-title-row"><div className="question-index">问题 {index + 1}</div></div><h3>{readableGeneratedQuestion(question.question)}</h3>
-              {question.question_en && <p className="question-en">{readableGeneratedQuestion(question.question_en)}</p>}
+              <div className="question-title-row"><div className="question-index">问题 {index + 1}</div></div><ProblemStatement className="generated-question" text={question.question} />
+              {question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
               <dl><dt>参考答案</dt><dd>{question.reference_answer}</dd><dt>出题评分点</dt><dd>{question.grading_points.join("；")}</dd></dl>
             </article>)}</div>
           </section>)}</div>
@@ -692,9 +691,9 @@ export function AdminApp() {
               <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><ProblemStatement className="statement" text={group.problem.statement} /><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
               <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
                 <div className="question-title-row"><div className="question-index">问题 {index + 1}</div><span className="question-score">{attempt.review_required ? "建议 " : ""}{question.score ?? "—"} / 2</span></div>
-                <h3>{readableGeneratedQuestion(question.question)}</h3>
+                <ProblemStatement className="generated-question" text={question.question} />
                 {question.review_required && <p className="review-notice">{attempt.review_required ? "待教师复核" : "曾触发复核"}：{question.review_reason}</p>}
-                {question.question_en && <p className="question-en">{readableGeneratedQuestion(question.question_en)}</p>}
+                {question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
                 <dl><dt>学生回答</dt><dd className="student-answer">{question.student_answer ?? "尚未回答"}</dd><dt>评分原因</dt><dd>{question.reason ?? "—"}</dd><dt>置信度</dt><dd>{question.confidence?.toFixed(2) ?? "—"}</dd><dt>参考答案</dt><dd>{question.reference_answer}</dd></dl>
               </article>)}</div>
             </section>)}</div>

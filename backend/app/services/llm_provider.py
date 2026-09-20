@@ -14,13 +14,13 @@ from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGene
 
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
-GENERATOR_VERSION = "question_generator_v13"
+GENERATOR_VERSION = "question_generator_v14"
 GRADER_VERSION = "grader_v8"
 
 KIND_RULES = {
-    "trace": "给出可在少量步骤内完整追踪的合法小输入，询问一个确定的输出或状态结果。type=trace。",
-    "boundary": "围绕合法输入域或数据结构的一项边界性质，询问一个行为或原因。type=boundary。",
-    "modification": "要求一项范围清楚、规模很小的代码调整，说明预期行为以及应保持不变的条件。type=modification。",
+    "trace": "针对一个输出位置或状态，给出合法小输入，只询问该位置的结果，不要求解释过程。type=trace。",
+    "boundary": "针对一个局部对象的合法边界情境，只问一个结果或一个原因，二者择一。type=boundary。",
+    "modification": "题干明确一个局部修改目标和允许修改的范围，只要求给出一项小规模修改，不附加解释或分析任务。type=modification。",
 }
 
 

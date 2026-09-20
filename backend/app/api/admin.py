@@ -586,7 +586,7 @@ async def request_quality(job_id: uuid.UUID, db: AsyncSession = Depends(get_db))
         raise HTTPException(409, "质量审核未启用")
     if job is None:
         raise HTTPException(404, "题目不存在")
-    if job.state != "succeeded" or job.quality_state not in ("not_requested", "failed"):
+    if job.state != "succeeded" or job.quality_state not in ("not_requested", "failed", "done"):
         raise HTTPException(409, "当前题目不能申请审核")
     job.quality_state = "queued"
     job.quality_attempts = 0

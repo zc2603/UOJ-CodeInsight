@@ -8,7 +8,7 @@ export function QualityAudit({ review }: { review?: QualityReview }) {
   const [error, setError] = useState("");
   useEffect(() => { setValue(review); }, [review]);
   useEffect(() => {
-    if (!value?.job_id || !["queued", "running"].includes(value.state)) return;
+    if (!value?.job_id) return;
     let active = true;
     const timer = window.setInterval(() => {
       void api<QualityReview>(`/api/admin/quality-audits/${value.job_id}/${value.index}`)
@@ -36,7 +36,7 @@ export function QualityAudit({ review }: { review?: QualityReview }) {
     {value.acknowledged && <span>已查看（不影响成绩）</span>}
     {value.reason && <p>{value.reason}</p>}
     {value.attention && <button className="link" disabled={busy} onClick={() => void act("acknowledge")}>标记已查看</button>}
-    {value.job_id && ["not_requested", "failed"].includes(value.state) && <button className="link" disabled={busy} onClick={() => void act("request")}>{value.state === "failed" ? "重试审核" : "申请审核"}</button>}
+    {value.job_id && ["not_requested", "failed", "done"].includes(value.state) && <button className="link" disabled={busy} onClick={() => void act("request")}>{value.state === "done" ? "重新审核" : value.state === "failed" ? "重试审核" : "申请审核"}</button>}
     {error && <p role="alert">{error}</p>}
   </section>;
 }

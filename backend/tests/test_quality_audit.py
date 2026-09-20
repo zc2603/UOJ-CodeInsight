@@ -97,7 +97,10 @@ async def test_teacher_only_audit_and_attention_do_not_block_open_or_student(db)
             for index in (1,2):
                 assert (await client.post(f"/api/admin/quality-audits/{identity[0]}/{index}/acknowledge")).status_code==200
             assert not (await client.get(rows_path)).json()[0]["quality_attention"]
+            assert (await client.post(f"/api/admin/quality-audits/{identity[0]}/request")).status_code==200
             assert (await client.post(f"/api/admin/quality-audits/{identity[0]}/request")).status_code==409
+            pending=(await client.get(path)).json()
+            assert pending["state"]=="queued" and pending["verdict"] is None and not pending["acknowledged"]
     finally:
         app.dependency_overrides.clear()
 

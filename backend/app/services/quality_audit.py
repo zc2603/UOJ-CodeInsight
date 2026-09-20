@@ -36,7 +36,7 @@ def presentation(job, index, threshold):
     if job is None:
         return dict(state="not_requested", attention=False, acknowledged=False)
     acknowledged = str(index) in (job.quality_acknowledged or {})
-    item = next((q for q in (job.quality_result or {}).get("questions", []) if q["index"] == index), {})
+    item = next((q for q in (job.quality_result or {}).get("questions", []) if q["index"] == index), {}) if job.quality_state == "done" else {}
     flagged = job.quality_state == "failed" or (job.quality_state == "done" and (
         item.get("verdict") != "pass" or item.get("confidence", 0) < threshold))
     return dict(job_id=str(job.id), index=index, state=job.quality_state,

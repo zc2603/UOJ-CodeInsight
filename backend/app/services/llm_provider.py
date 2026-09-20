@@ -56,7 +56,7 @@ def generation_schema(kind, source_code=None):
     return AssignedQuestions
 
 
-def score_assessments(assessment, raw, answers, confidence_threshold=0.75):
+def score_assessments(assessment, raw, answers, confidence_threshold=0.85):
     grades = []
     if {grade.question_index for grade in assessment.grades} != set(answers):
         raise LLMProviderError("评分题号与提交不一致", raw_response=raw)
@@ -67,8 +67,8 @@ def score_assessments(assessment, raw, answers, confidence_threshold=0.75):
             review_reasons.append(grade.validity_reason)
         if grade.scoring_uncertain:
             review_reasons.append("模型无法确定应给分数")
-        if grade.confidence < confidence_threshold:
-            review_reasons.append(f"置信度 {grade.confidence:.2f} 低于复核阈值 {confidence_threshold:.2f}")
+        if grade.confidence <= confidence_threshold:
+            review_reasons.append(f"置信度 {grade.confidence:.2f} 不高于复核阈值 {confidence_threshold:.2f}")
         if grade.validity == "invalid" and grade.objection == "correct":
             score = 2
             reason = "准确指出题目实质性缺陷，按规则建议 2 分，待教师复核。" + grade.validity_reason

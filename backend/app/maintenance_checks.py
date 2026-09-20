@@ -32,6 +32,10 @@ def check_config() -> int:
     print(f"llm_max_concurrency={settings.llm_max_concurrency}")
     print(f"grading_review_confidence_threshold={settings.grading_review_confidence_threshold}")
     print(f"generation_global_concurrency={settings.generation_global_concurrency}")
+    print(f"quality_audit_enabled={settings.quality_audit_enabled}")
+    print(f"quality_audit_confidence_threshold={settings.quality_audit_confidence_threshold}")
+    print(f"quality_audit_timeout_seconds={settings.quality_audit_timeout_seconds}")
+    print(f"quality_audit_max_tokens={settings.quality_audit_max_tokens}")
     print(f"grading_workers={settings.grading_workers}")
     print(f"grading_poll_seconds={settings.grading_poll_seconds}")
     print(f"grading_task_timeout_seconds={settings.grading_task_timeout_seconds}")
@@ -83,7 +87,8 @@ async def check_preparation_schema():
         await db.execute(text("SELECT draft_text, draft_revision, grading_token, grading_lease_until FROM attempts LIMIT 0"))
         timeout_counts = (await db.execute(text("SELECT status, COUNT(*) FROM attempts WHERE timed_out = true OR status = 'EXPIRED' GROUP BY status"))).all()
         print("timeout_submissions=" + (",".join(f"{state}:{count}" for state, count in timeout_counts) or "empty"))
-        assert revision == "0005_timeout_submission" and control == 1
+        await db.execute(text("SELECT quality_state, quality_result, quality_token FROM generation_jobs LIMIT 0"))
+        assert revision == "0006_question_quality" and control == 1
         print(f"preparation_schema=ok revision={revision}")
         print("preparation_jobs=" + (",".join(f"{state}:{count}" for state, count in counts) or "empty"))
         from app.generation_diagnostics import latest_generation

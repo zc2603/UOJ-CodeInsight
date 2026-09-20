@@ -276,6 +276,7 @@ class GenerationJob(Base):
     __table_args__ = (
         UniqueConstraint("submission_snapshot_id", "round_no"),
         Index("ix_generation_claim", "state", "available_at"),
+        Index("ix_quality_claim", "quality_state", "quality_lease_until"),
     )
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     quiz_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("quizzes.id", ondelete="CASCADE"), index=True)
@@ -288,6 +289,17 @@ class GenerationJob(Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    quality_state: Mapped[str] = mapped_column(String(20), default="not_requested", server_default="not_requested")
+    quality_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    quality_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    quality_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    quality_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    quality_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    quality_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    quality_acknowledged: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    quality_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)

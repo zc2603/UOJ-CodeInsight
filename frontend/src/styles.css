@@ -612,3 +612,6 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .answer-panel .generated-question { font-size: 18px; }
 .generated-question pre, .generated-question table { max-width: 100%; }
 .markdown-statement.question-en { white-space: normal; }
+
+.quality-review { margin: 12px 0; padding: 12px 14px; border: 1px solid #d9e3df; border-radius: 8px; background: #f5f8f6; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.quality-review p { flex-basis: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

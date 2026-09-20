@@ -9,9 +9,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, 
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 
 from app.api.dependencies import AdminPrincipal, require_admin
+from app.services.quality_audit import presentation as quality_presentation
 from app.config import get_settings
 from app.database import get_db
 from app.models import (
@@ -293,6 +294,7 @@ async def regenerate_quiz_code(
     return QuizCreatedResponse(id=quiz.id, quiz_code=code, status=quiz.status)
 
 
+
 async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
     participants = (
         await db.execute(
@@ -309,8 +311,10 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
             )
         )
     ).scalars().all()
-    jobs = (await db.execute(select(GenerationJob.participant_id, GenerationJob.round_no, GenerationJob.state)
-        .where(GenerationJob.quiz_id == quiz_id))).all()
+    jobs = (await db.execute(select(GenerationJob).options(load_only(GenerationJob.id, GenerationJob.participant_id,
+            GenerationJob.round_no, GenerationJob.state, GenerationJob.quality_state, GenerationJob.quality_result,
+            GenerationJob.quality_acknowledged, GenerationJob.quality_error, GenerationJob.quality_model, GenerationJob.quality_version))
+        .where(GenerationJob.quiz_id == quiz_id))).scalars().all()
     latest_round = {}
     for job in jobs:
         latest_round[job.participant_id] = max(latest_round.get(job.participant_id, 0), job.round_no)
@@ -334,6 +338,10 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
         problem_count = len({q.submission_snapshot_id for q in questions})
         rows.append(
             ResultRow(
+                quality_attention=any(quality_presentation(j, i, get_settings().quality_audit_confidence_threshold)["attention"]
+                    for j in jobs if j.participant_id == participant.id and j.round_no == (
+                        attempt.attempt_no if attempt and attempt.status != AttemptStatus.RESET else latest_round.get(participant.id))
+                    for i in (1, 2)),
                 review_required=bool(attempt and attempt.review_required),
                 student_number=participant.student_number,
                 participant_status=participant.status,
@@ -385,7 +393,7 @@ async def prepared_questions(quiz_id: uuid.UUID, student_number: str, db: AsyncS
             continue
         generated = QuestionGenerationResult.model_validate(job.result_json)
         for item in generated.questions:
-            questions.append(dict(index=len(questions) + 1, type=item.type, question=item.question,
+            questions.append(dict(quality=quality_presentation(job, item.index, get_settings().quality_audit_confidence_threshold), index=len(questions) + 1, type=item.type, question=item.question,
                 question_en=item.question_en, reference_answer=item.reference_answer, grading_points=item.grading_points,
                 problem=dict(id=snapshot.uoj_problem_id, title=snapshot.problem.title, statement=snapshot.problem.statement),
                 source_code=snapshot.source_code, language=snapshot.language,
@@ -419,6 +427,15 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
     if attempt is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Attempt 不存在")
     questions = sorted(attempt.questions, key=lambda item: item.question_index)
+    quality_jobs = (await db.execute(select(GenerationJob).where(
+        GenerationJob.participant_id == attempt.participant_id, GenerationJob.round_no == attempt.attempt_no))).scalars().all()
+    quality_by_snapshot = {job.submission_snapshot_id: job for job in quality_jobs}
+    quality_by_question = {}
+    local_indices = {}
+    for question in questions:
+        local_indices[question.submission_snapshot_id] = local_indices.get(question.submission_snapshot_id, 0) + 1
+        quality_by_question[question.id] = quality_presentation(quality_by_snapshot.get(question.submission_snapshot_id),
+            local_indices[question.submission_snapshot_id], get_settings().quality_audit_confidence_threshold)
     max_score = len(questions) * 2
     final_score = (
         attempt.manual_override_score
@@ -437,6 +454,7 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
         "manual_override_reason": attempt.manual_override_reason,
         "questions": [
             {
+                "quality": quality_by_question[item.id],
                 "index": item.question_index,
                 "type": item.question_type,
                 "question": item.question_text,
@@ -547,3 +565,40 @@ async def export_csv(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="quiz-{quiz_id}.csv"'},
     )
+
+
+@router.post("/quality-audits/{job_id}/{question_index}/acknowledge", dependencies=[Depends(require_admin)])
+async def acknowledge_quality(job_id: uuid.UUID, question_index: int, db: AsyncSession = Depends(get_db)):
+    job = await db.scalar(select(GenerationJob).where(GenerationJob.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(404, "审核不存在")
+    if question_index not in (1, 2) or job.quality_state not in ("done", "failed"):
+        raise HTTPException(409, "当前审核不能标记已查看")
+    job.quality_acknowledged = {**(job.quality_acknowledged or {}), str(question_index): datetime.now(timezone.utc).isoformat()}
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/quality-audits/{job_id}/request", dependencies=[Depends(require_admin)])
+async def request_quality(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    job = await db.scalar(select(GenerationJob).where(GenerationJob.id == job_id).with_for_update())
+    if not get_settings().quality_audit_enabled:
+        raise HTTPException(409, "质量审核未启用")
+    if job is None:
+        raise HTTPException(404, "题目不存在")
+    if job.state != "succeeded" or job.quality_state not in ("not_requested", "failed"):
+        raise HTTPException(409, "当前题目不能申请审核")
+    job.quality_state = "queued"
+    job.quality_attempts = 0
+    job.quality_token = None
+    job.quality_error = None
+    job.quality_acknowledged = None
+    await db.commit()
+    return {"ok": True}
+
+@router.get("/quality-audits/{job_id}/{question_index}", dependencies=[Depends(require_admin)])
+async def quality_detail(job_id: uuid.UUID, question_index: int, db: AsyncSession = Depends(get_db)):
+    job = await db.get(GenerationJob, job_id)
+    if job is None or question_index not in (1, 2):
+        raise HTTPException(404, "审核不存在")
+    return quality_presentation(job, question_index, get_settings().quality_audit_confidence_threshold)

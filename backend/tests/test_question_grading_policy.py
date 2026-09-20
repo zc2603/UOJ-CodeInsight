@@ -54,7 +54,7 @@ def test_false_objection_does_not_get_free_points_and_empty_answer_cannot_score(
         assessment(["correct"], objection="correct")
 
 
-@pytest.mark.parametrize("confidence,uncertain,review", [(0.74,False,True),(0.75,False,False),(0.99,True,True)])
+@pytest.mark.parametrize("confidence,uncertain,review", [(0.75,False,True),(0.85,False,True),(0.85001,False,False),(0.99,True,True)])
 def test_low_confidence_and_explicit_scoring_uncertainty(confidence, uncertain, review):
     data = assessment(["partial"])
     data.grades[0].confidence = confidence

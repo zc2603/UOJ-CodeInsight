@@ -49,6 +49,7 @@ export interface QuizSummary {
 }
 
 export interface ResultRow {
+  quality_attention: boolean;
   timed_out: boolean;
   review_required: boolean;
   prepared_problem_count: number;
@@ -68,6 +69,7 @@ export interface ResultRow {
 }
 
 export interface AttemptQuestionDetail {
+  quality?: QualityReview;
   review_required?: boolean;
   review_reason?: string | null;
   question_validity?: string | null;
@@ -105,4 +107,15 @@ export interface PreparedDetail {
   prepared_problem_count: number;
   preparation_total: number;
   questions: AttemptQuestionDetail[];
+}
+
+export interface QualityReview {
+  job_id?: string;
+  index?: number;
+  state: string;
+  verdict?: "pass" | "fail" | "uncertain" | null;
+  confidence?: number | null;
+  reason?: string | null;
+  attention: boolean;
+  acknowledged: boolean;
 }

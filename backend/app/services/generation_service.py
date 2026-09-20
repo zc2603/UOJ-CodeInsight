@@ -223,6 +223,8 @@ async def finish(db, settings, identity, *, result=None, raw=None, error=None):
         job.state = "succeeded"
         job.result_json = result.model_dump(mode="json")
         job.raw_response = raw
+        if settings.quality_audit_enabled:
+            job.quality_state = "queued"
     await db.commit()
     return True
 

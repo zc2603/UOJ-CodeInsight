@@ -170,6 +170,7 @@ class ManualOverrideRequest(BaseModel):
 
 
 class ResultRow(BaseModel):
+    quality_attention: bool = False
     timed_out: bool = False
     review_required: bool = False
     prepared_problem_count: int = 0

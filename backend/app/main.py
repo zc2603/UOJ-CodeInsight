@@ -11,6 +11,7 @@ from app.database import SessionLocal
 from app.services.attempt_maintenance import maintain_attempts
 from app.services.generation_service import generation_worker
 from app.services.grading_queue import grading_worker
+from app.services.quality_audit import worker as quality_worker
 from app.integrations.uoj import UOJRepository, UOJSubmissionArchiveClient
 from app.services.import_service import ImportService
 from app.services.llm_provider import create_llm_provider
@@ -32,9 +33,13 @@ async def lifespan(app: FastAPI):
         for _ in range(settings.grading_workers)]
     generators = [asyncio.create_task(generation_worker(SessionLocal, settings, app.state.llm_provider))
         for _ in range(settings.generation_workers)]
+    quality = asyncio.create_task(quality_worker(SessionLocal, settings)) if settings.quality_audit_enabled else None
     try:
         yield
     finally:
+        if quality is not None:
+            quality.cancel()
+            await asyncio.gather(quality, return_exceptions=True)
         for worker in generators:
             worker.cancel()
         await asyncio.gather(*generators, return_exceptions=True)

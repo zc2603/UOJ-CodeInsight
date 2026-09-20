@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.models import GenerationJob, SubmissionSnapshot
 from app.services.llm_provider import PROMPTS, encode_untrusted, number_source_lines, create_llm_provider
 
-VERSION = "question_quality_v2"
+VERSION = "question_quality_v3"
 logger = logging.getLogger(__name__)
 
 

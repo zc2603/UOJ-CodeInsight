@@ -14,13 +14,13 @@ from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGene
 
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
-GENERATOR_VERSION = "question_generator_v15"
+GENERATOR_VERSION = "question_generator_v16"
 GRADER_VERSION = "grader_v8"
 
 KIND_RULES = {
-    "trace": "针对一个输出位置或状态，给出合法小输入，只询问该位置的结果，不要求解释过程。type=trace。",
-    "boundary": "针对一个局部对象的合法边界情境，只问一个结果或一个原因，二者择一。type=boundary。",
-    "modification": "题干明确一个局部修改目标和允许修改的范围，只要求给出一项小规模修改，不附加解释或分析任务。type=modification。",
+    "trace": "围绕学生代码中的一个具体机制，给出可用少量步骤手工追踪的合法小情境，优先询问明确执行位置的一个局部状态或结果。避免仅凭原题规则即可作答的最终输出题，以及大量算术或长序列模拟；只要求结果，不附加解释任务。type=trace。",
+    "boundary": "围绕学生代码处理的一项合法边界情境，明确相关代码、触发条件和考查目标，提出一个聚焦边界处理的具体问题。考查实际实现对该边界的处理，不泛泛要求罗列所有边界或证明整个程序正确，不附带修改代码或追踪完整执行过程的任务。type=boundary。",
+    "modification": "围绕学生代码中的一个具体机制，由题干明确局部修改目标、允许修改的位置和必要限制，要求给出一项可直接用于当前代码的小规模修改方案。目标应涉及代码理解，避免机械抄写或大范围重构；方案须在给定范围内可实现，只要求修改，不附加效果分析、正确性证明或总结不变条件。type=modification。",
 }
 
 

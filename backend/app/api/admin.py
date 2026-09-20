@@ -338,7 +338,7 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
         problem_count = len({q.submission_snapshot_id for q in questions})
         rows.append(
             ResultRow(
-                quality_attention=any(quality_presentation(j, i, get_settings().quality_audit_confidence_threshold)["attention"]
+                quality_attention=any(quality_presentation(j, i)["attention"]
                     for j in jobs if j.participant_id == participant.id and j.round_no == (
                         attempt.attempt_no if attempt and attempt.status != AttemptStatus.RESET else latest_round.get(participant.id))
                     for i in (1, 2)),
@@ -393,7 +393,7 @@ async def prepared_questions(quiz_id: uuid.UUID, student_number: str, db: AsyncS
             continue
         generated = QuestionGenerationResult.model_validate(job.result_json)
         for item in generated.questions:
-            questions.append(dict(quality=quality_presentation(job, item.index, get_settings().quality_audit_confidence_threshold), index=len(questions) + 1, type=item.type, question=item.question,
+            questions.append(dict(quality=quality_presentation(job, item.index), index=len(questions) + 1, type=item.type, question=item.question,
                 question_en=item.question_en, reference_answer=item.reference_answer, grading_points=item.grading_points,
                 problem=dict(id=snapshot.uoj_problem_id, title=snapshot.problem.title, statement=snapshot.problem.statement),
                 source_code=snapshot.source_code, language=snapshot.language,
@@ -435,7 +435,7 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
     for question in questions:
         local_indices[question.submission_snapshot_id] = local_indices.get(question.submission_snapshot_id, 0) + 1
         quality_by_question[question.id] = quality_presentation(quality_by_snapshot.get(question.submission_snapshot_id),
-            local_indices[question.submission_snapshot_id], get_settings().quality_audit_confidence_threshold)
+            local_indices[question.submission_snapshot_id])
     max_score = len(questions) * 2
     final_score = (
         attempt.manual_override_score
@@ -601,4 +601,4 @@ async def quality_detail(job_id: uuid.UUID, question_index: int, db: AsyncSessio
     job = await db.get(GenerationJob, job_id)
     if job is None or question_index not in (1, 2):
         raise HTTPException(404, "审核不存在")
-    return quality_presentation(job, question_index, get_settings().quality_audit_confidence_threshold)
+    return quality_presentation(job, question_index)

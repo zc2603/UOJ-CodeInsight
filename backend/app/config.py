@@ -47,7 +47,6 @@ class Settings(BaseSettings):
     grading_review_confidence_threshold: float = Field(default=0.85, ge=0, le=1)
 
     quality_audit_enabled: bool = True
-    quality_audit_confidence_threshold: float = Field(default=0.75, ge=0, le=1)
     quality_audit_timeout_seconds: float = Field(default=1200, gt=0)
     quality_audit_max_tokens: int = Field(default=100000, ge=1000)
 

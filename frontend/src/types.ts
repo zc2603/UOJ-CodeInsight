@@ -114,7 +114,6 @@ export interface QualityReview {
   index?: number;
   state: string;
   verdict?: "pass" | "fail" | "uncertain" | null;
-  confidence?: number | null;
   reason?: string | null;
   attention: boolean;
   acknowledged: boolean;

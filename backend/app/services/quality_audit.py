@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 class QualityItem(BaseModel):
     index: int = Field(ge=1, le=2)
     verdict: Literal["pass", "fail", "uncertain"]
-    confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
     reason: str = Field(min_length=1, max_length=2000)
 
 
@@ -32,15 +31,15 @@ class QualityResult(BaseModel):
         return self
 
 
-def presentation(job, index, threshold):
+def presentation(job, index):
     if job is None:
         return dict(state="not_requested", attention=False, acknowledged=False)
     acknowledged = str(index) in (job.quality_acknowledged or {})
     item = next((q for q in (job.quality_result or {}).get("questions", []) if q["index"] == index), {}) if job.quality_state == "done" else {}
     flagged = job.quality_state == "failed" or (job.quality_state == "done" and (
-        item.get("verdict") != "pass" or item.get("confidence", 0) < threshold))
+        item.get("verdict") != "pass"))
     return dict(job_id=str(job.id), index=index, state=job.quality_state,
-        verdict=item.get("verdict"), confidence=item.get("confidence"),
+        verdict=item.get("verdict"),
         reason=item.get("reason") or job.quality_error, attention=flagged and not acknowledged,
         acknowledged=acknowledged, model=job.quality_model, version=job.quality_version)
 
@@ -103,7 +102,7 @@ async def run(factory, settings, provider, identity):
             payload = dict(title=snapshot.problem.title, statement=snapshot.problem.statement,
                 source_code=number_source_lines(snapshot.source_code), language=snapshot.language, questions=job.result_json)
         if settings.llm_provider == "mock":
-            result = QualityResult(questions=[QualityItem(index=i, verdict="uncertain", confidence=0,
+            result = QualityResult(questions=[QualityItem(index=i, verdict="uncertain",
                 reason="Mock 审核：未验证真实题目质量") for i in (1, 2)])
             raw = result.model_dump_json()
         else:

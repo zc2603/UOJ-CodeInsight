@@ -31,8 +31,7 @@ export function QualityAudit({ review }: { review?: QualityReview }) {
   }
   return <section className="quality-review" aria-label="题目质量审核">
     <strong>题目质量：{labels[value.verdict || value.state] || value.state}</strong>
-    {value.confidence != null && <span>判定置信度 {value.confidence.toFixed(2)}</span>}
-    {value.attention && <span className="status-pill quality-attention">需关注{value.verdict === "pass" ? "：通过但把握不足" : ""}</span>}
+    {value.attention && <span className="status-pill quality-attention">需关注</span>}
     {value.acknowledged && <span>已查看（不影响成绩）</span>}
     {value.reason && <p>{value.reason}</p>}
     {value.attention && <button className="link" disabled={busy} onClick={() => void act("acknowledge")}>标记已查看</button>}

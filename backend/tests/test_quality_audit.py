@@ -22,19 +22,19 @@ def outcome(verdict="pass", confidence=.99):
     return dict(questions=[dict(index=i, verdict=verdict, confidence=confidence, reason="具体证据") for i in (1,2)])
 
 
-@pytest.mark.parametrize("verdict,confidence,attention", [("pass",.75,False),("pass",.74,True),("fail",.99,True),("uncertain",.99,True)])
+@pytest.mark.parametrize("verdict,confidence,attention", [("pass",.75,False),("pass",.74,False),("fail",.99,True),("uncertain",.99,True)])
 def test_attention_is_not_a_score(verdict, confidence, attention):
     job = GenerationJob(id=uuid.uuid4(), quality_state="done", quality_result=outcome(verdict, confidence))
-    assert audit.presentation(job,1,.75)["attention"] == attention
+    assert audit.presentation(job,1)["attention"] == attention
     job.quality_acknowledged = {"1":"viewed"}
-    assert not audit.presentation(job,1,.75)["attention"]
-    assert audit.presentation(job,2,.75)["attention"] == attention
+    assert not audit.presentation(job,1)["attention"]
+    assert audit.presentation(job,2)["attention"] == attention
     job.quality_state = "failed"
-    assert audit.presentation(job,2,.75)["attention"]
+    assert audit.presentation(job,2)["attention"]
 
 
-def test_protocol_rejects_duplicate_missing_and_invalid_confidence():
-    for payload in [dict(questions=outcome()["questions"][:1]), dict(questions=[outcome()["questions"][0]]*2),outcome(confidence=1.1)]:
+def test_protocol_rejects_duplicate_and_missing_questions():
+    for payload in [dict(questions=outcome()["questions"][:1]), dict(questions=[outcome()["questions"][0]]*2)]:
         with pytest.raises(ValidationError):
             audit.QualityResult.model_validate(payload)
 
@@ -185,3 +185,9 @@ async def test_teacher_can_explicitly_request_old_or_failed_audit_once(db):
             assert job.state=="succeeded"
     finally: app.dependency_overrides.clear()
 
+
+
+def test_new_protocol_omits_confidence_and_reads_legacy_results():
+    parsed=audit.QualityResult.model_validate(outcome(confidence=.1))
+    assert "confidence" not in parsed.model_dump()["questions"][0]
+    audit.QualityResult.model_validate({"questions":[{"index":i,"verdict":"uncertain","reason":"无法核实边界"} for i in (1,2)]})

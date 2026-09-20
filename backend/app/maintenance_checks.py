@@ -33,7 +33,6 @@ def check_config() -> int:
     print(f"grading_review_confidence_threshold={settings.grading_review_confidence_threshold}")
     print(f"generation_global_concurrency={settings.generation_global_concurrency}")
     print(f"quality_audit_enabled={settings.quality_audit_enabled}")
-    print(f"quality_audit_confidence_threshold={settings.quality_audit_confidence_threshold}")
     print(f"quality_audit_timeout_seconds={settings.quality_audit_timeout_seconds}")
     print(f"quality_audit_max_tokens={settings.quality_audit_max_tokens}")
     print(f"grading_workers={settings.grading_workers}")

@@ -88,6 +88,16 @@ async def check_preparation_schema():
         timeout_counts = (await db.execute(text("SELECT status, COUNT(*) FROM attempts WHERE timed_out = true OR status = 'EXPIRED' GROUP BY status"))).all()
         print("timeout_submissions=" + (",".join(f"{state}:{count}" for state, count in timeout_counts) or "empty"))
         await db.execute(text("SELECT quality_state, quality_result, quality_token FROM generation_jobs LIMIT 0"))
+        from app.services.quality_audit import QualityResult
+        from pydantic import ValidationError
+        import json
+        samples = (await db.execute(text("SELECT quality_raw FROM generation_jobs WHERE quality_state = 'failed' AND quality_raw IS NOT NULL ORDER BY quality_finished_at DESC LIMIT 10"))).scalars().all()
+        for raw in samples:
+            try:
+                QualityResult.model_validate_json(raw)
+            except ValidationError as exc:
+                print("quality_validation=" + json.dumps([{"loc": e["loc"], "type": e["type"]} for e in exc.errors(include_input=False, include_context=False, include_url=False)]))
+                print("quality_response_length=" + str(len(raw)))
         assert revision == "0006_question_quality" and control == 1
         print(f"preparation_schema=ok revision={revision}")
         print("preparation_jobs=" + (",".join(f"{state}:{count}" for state, count in counts) or "empty"))

@@ -48,8 +48,8 @@ class Settings(BaseSettings):
 
     quality_audit_enabled: bool = True
     quality_audit_confidence_threshold: float = Field(default=0.75, ge=0, le=1)
-    quality_audit_timeout_seconds: float = Field(default=180, gt=0)
-    quality_audit_max_tokens: int = Field(default=8000, ge=1000)
+    quality_audit_timeout_seconds: float = Field(default=1200, gt=0)
+    quality_audit_max_tokens: int = Field(default=100000, ge=1000)
 
     grading_workers: int = Field(default=4, ge=1, le=20)
     grading_poll_seconds: float = Field(default=3, gt=0)

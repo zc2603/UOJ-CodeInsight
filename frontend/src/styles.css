@@ -615,3 +615,10 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 
 .quality-review { margin: 12px 0; padding: 12px 14px; border: 1px solid #d9e3df; border-radius: 8px; background: #f5f8f6; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 14px; }
 .quality-review p { flex-basis: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.status-pill.quality-attention { background: #fff8e8; border-color: #dfc489; color: #805b19; white-space: nowrap; }
+.result-table td > .quality-attention { margin-top: 5px; }
+.quality-review { gap: 8px 12px; padding: 12px 14px; align-items: center; }
+.quality-review > strong { font-size: 14px; }
+.quality-review > span:not(.status-pill) { color: #68776e; font-size: 12px; }
+.quality-review .link { padding: 2px 0; min-height: 0; }

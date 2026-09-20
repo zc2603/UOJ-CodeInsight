@@ -115,7 +115,7 @@ async def test_new_round_does_not_inherit_old_attention(db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["success","invalid","timeout"])
+@pytest.mark.parametrize("mode", ["success","invalid","timeout","empty","length","fail"])
 async def test_real_request_shape_offline_and_failures_preserve_generation(db,mode):
     import asyncio
     await prepare_seed(db)
@@ -126,7 +126,9 @@ async def test_real_request_shape_offline_and_failures_preserve_generation(db,mo
         import json
         observed.append(json.loads(request.content))
         if mode=="timeout": await asyncio.sleep(2)
-        return httpx.Response(200,json={"choices":[{"message":{"content": audit.QualityResult.model_validate(outcome()).model_dump_json() if mode=="success" else "bad json"}}]})
+        content = audit.QualityResult.model_validate(outcome("fail" if mode=="fail" else "pass")).model_dump_json() if mode in ("success", "fail") else "bad json"
+        if mode in ("empty", "length"): content = ""
+        return httpx.Response(200,json={"choices":[{"finish_reason": "length" if mode=="length" else "stop", "message":{"content":content}}]})
     settings=Settings(llm_provider="openai-compatible",llm_api_key="test",quality_audit_timeout_seconds=.5 if mode=="timeout" else 2)
     provider=OpenAICompatibleLLMProvider(settings)
     await provider.client.aclose()
@@ -136,9 +138,9 @@ async def test_real_request_shape_offline_and_failures_preserve_generation(db,mo
         await audit.run(factory,settings,provider,identity)
     finally: await provider.close()
     job=await db.get(GenerationJob,identity[0],populate_existing=True)
-    assert job.quality_state == ("done" if mode=="success" else "failed")
+    assert job.quality_state == ("done" if mode in ("success","fail") else "failed")
     assert job.state=="succeeded" and job.result_json
-    assert len(observed)==1 and observed[0]["max_tokens"]==8000
+    assert len(observed)==1 and observed[0]["max_tokens"]==100000
 
 
 def test_migration_leaves_existing_jobs_unaudited(tmp_path):
@@ -179,3 +181,4 @@ async def test_teacher_can_explicitly_request_old_or_failed_audit_once(db):
             assert (await client.post(path)).status_code==200
             assert job.state=="succeeded"
     finally: app.dependency_overrides.clear()
+

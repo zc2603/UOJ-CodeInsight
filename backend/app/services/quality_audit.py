@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, ValidationError
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import selectinload
 from app.models import GenerationJob, SubmissionSnapshot
@@ -116,11 +116,17 @@ async def run(factory, settings, provider, identity):
                     thinking={"type": "enabled"}, reasoning_effort=settings.llm_reasoning_effort,
                     max_tokens=settings.quality_audit_max_tokens, response_format={"type": "json_object"}))
                 response.raise_for_status()
-                raw = response.json()["choices"][0]["message"]["content"]
+                choice = response.json()["choices"][0]
+                raw = choice["message"].get("content")
+                if choice.get("finish_reason") == "length" or not isinstance(raw, str) or not raw.strip():
+                    error = "审核输出达到 token 上限，未形成完整结论" if choice.get("finish_reason") == "length" else "模型未返回审核结论（空响应）"
+                    async with factory() as db:
+                        await finish(db, identity, provider.model_name, raw=raw if isinstance(raw, str) else None, error=error)
+                    return
                 result = QualityResult.model_validate_json(raw)
             except Exception as exc:
                 async with factory() as db:
-                    await finish(db, identity, provider.model_name, raw=raw, error="审核失败（" + type(exc).__name__ + "）")
+                    await finish(db, identity, provider.model_name, raw=raw, error="审核响应格式不符合协议" if isinstance(exc, ValidationError) else "审核请求失败（" + type(exc).__name__ + "）")
                 return
         async with factory() as db:
             await finish(db, identity, provider.model_name, result=result.model_dump(mode="json"), raw=raw)
@@ -134,7 +140,7 @@ async def run(factory, settings, provider, identity):
             await heartbeat
     except Exception as exc:
         async with factory() as db:
-            await finish(db, identity, provider.model_name, error="审核失败（" + type(exc).__name__ + "）")
+            await finish(db, identity, provider.model_name, error="审核响应格式不符合协议" if isinstance(exc, ValidationError) else "审核请求失败（" + type(exc).__name__ + "）")
     finally:
         task.cancel()
         heartbeat.cancel()

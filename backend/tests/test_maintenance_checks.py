@@ -7,8 +7,8 @@ def test_smoke_check_finds_current_prompts(capsys, monkeypatch) -> None:
     monkeypatch.setattr("app.maintenance_checks.check_preparation_schema", fake_schema_check)
     assert smoke_check() == 0
     output = capsys.readouterr().out
-    assert "prompt_version=question_generator_v16" in output
-    assert "grader_prompt_version=grader_v8" in output
+    assert "prompt_version=question_generator_v17" in output
+    assert "grader_prompt_version=grader_v9" in output
 
 
 def test_config_check_redacts_secret_values(monkeypatch, capsys) -> None:

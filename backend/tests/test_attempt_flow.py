@@ -403,7 +403,7 @@ async def test_rejected_whitespace_grade_retains_answers_and_raw_evidence(db):
     assert all(a.student_answer == "1 2" and a.auto_score is None for a in answers)
     log = (await db.execute(select(LLMCallLog).where(LLMCallLog.success == False))).scalar_one()
     assert log.raw_response == 'original rejected response'
-    assert log.prompt_version == 'grader_v10'
+    assert log.prompt_version == 'grader_v11'
 
 
 @pytest.mark.asyncio

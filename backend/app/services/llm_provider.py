@@ -14,13 +14,13 @@ from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGene
 
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
-GENERATOR_VERSION = "question_generator_v17"
-GRADER_VERSION = "grader_v9"
+GENERATOR_VERSION = "question_generator_v16"
+GRADER_VERSION = "grader_v8"
 
 KIND_RULES = {
-    "trace": "type=trace。围绕具体实现给出可用少量步骤手工追踪的合法情境，明确所问位置和时刻，学生只交付结果。优先询问局部状态；询问最终输出时，也须依赖对具体实现的理解。",
-    "boundary": "type=boundary。聚焦实际代码处理的一项合法边界，明确相关代码、触发条件和考查目标。问题可询问处理结果或原因，范围限于该边界的处理；泛泛罗列全部边界、证明整个程序正确或附加修改代码、完整执行追踪任务均不符合要求。",
-    "modification": "type=modification。题干给出一个局部修改目标、允许修改的位置和必要限制，学生只交付一项可直接用于当前代码的小规模方案。目标须涉及代码理解，方案在范围内可实现、操作合法，并保持目标之外的行为。机械抄写和大范围重构不符合要求。效果分析、正确性证明和不变条件总结不作为作答要求。",
+    "trace": "围绕学生代码中的一个具体机制，给出可用少量步骤手工追踪的合法小情境，优先询问明确执行位置的一个局部状态或结果。避免仅凭原题规则即可作答的最终输出题，以及大量算术或长序列模拟；只要求结果，不附加解释任务。type=trace。",
+    "boundary": "围绕学生代码处理的一项合法边界情境，明确相关代码、触发条件和考查目标，提出一个聚焦边界处理的具体问题。考查实际实现对该边界的处理，不泛泛要求罗列所有边界或证明整个程序正确，不附带修改代码或追踪完整执行过程的任务。type=boundary。",
+    "modification": "围绕学生代码中的一个具体机制，由题干明确局部修改目标、允许修改的位置和必要限制，要求给出一项可直接用于当前代码的小规模修改方案。目标应涉及代码理解，避免机械抄写或大范围重构；方案须在给定范围内可实现，只要求修改，不附加效果分析、正确性证明或总结不变条件。type=modification。",
 }
 
 
@@ -255,7 +255,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                 schema_failures += 1
                 if schema_failures >= 3:
                     break
-                user_prompt += "\n\n请重新生成完整的 JSON 对象：上一份响应未通过校验，请逐项核对规定的字段、类型和取值。"
+                user_prompt += "\n\n上一次输出未通过结构或类型校验。请遵守指定题型、字段和取值，只返回完整合法的 JSON。"
         raise LLMProviderError(f"LLM response failed validation: {type(last_error).__name__}", raw_response=raw)
 
     async def generate_questions(
@@ -263,7 +263,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
     ) -> tuple[QuestionGenerationResult, str]:
         schema = generation_schema(second_question_kind, source_code)
         system = (PROMPTS / f"{GENERATOR_VERSION}.txt").read_text(encoding="utf-8")
-        system += f"\n\n## 本次第二问题型\nsecond_kind={second_question_kind}。" + KIND_RULES[second_question_kind]
+        system += f"\n本次第二问 second_kind={second_question_kind}。" + KIND_RULES[second_question_kind]
         user = f"""<PROBLEM>
 标题（JSON 字符串）：{encode_untrusted(title)}
 题面（JSON 字符串）：
@@ -277,9 +277,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 {encode_untrusted(number_source_lines(source_code))}
 </STUDENT_CODE>
 
-输出格式：返回含 questions 数组的 JSON 对象，数组按 index=1、2 包含两题。
-每题字段为 index、type、question（中文题干）、question_en（英文对照）、reference_answer（中文参考答案）、grading_points（1–3 个评分点）。
-第一题 type=explanation；第二题 type={second_question_kind}，并额外包含 second_kind={second_question_kind}。
+输出对象必须含 questions 数组，严格为两题；每题含 index、type、question、question_en、reference_answer、grading_points。第二题额外含 second_kind，值必须为 {second_question_kind}。
 """
         return await self._request_json(system, user, schema)
 
@@ -317,7 +315,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 
 {chr(10).join(blocks)}
 
-按系统规定的 JSON 协议评价以上全部题号；题号与这里提供的编号保持一致。
+逐一评价以上全部题号，按系统规定的 JSON 协议返回；每题必须有整数 suggested_score，即使题目有缺陷或评分不确定也不得留空。
 """
         assessment, raw = await self._request_json(system, user, GradingAssessmentResult)
         result = score_assessments(assessment, raw, {item['question_index']: str(item['student_answer']) for item in question_payload},

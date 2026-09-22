@@ -95,6 +95,8 @@ export function AdminApp() {
   const [quizzes, setQuizzes] = useState<QuizSummary[]>([]);
   const [results, setResults] = useState<ResultRow[]>([]);
   const [selected, setSelected] = useState<QuizSummary | null>(null);
+  const [editingQuestion, setEditingQuestion] = useState<AttemptQuestionDetail | null>(null);
+  const [editError, setEditError] = useState("");
   const [preparedDetail, setPreparedDetail] = useState<PreparedDetail | null>(null);
   const [attempt, setAttempt] = useState<AttemptDetail | null>(null);
   const [overrideScore, setOverrideScore] = useState(0);
@@ -392,9 +394,28 @@ export function AdminApp() {
     setMessage("");
     try {
       const detail = await api<PreparedDetail>(`/api/admin/quizzes/${selected.id}/students/${encodeURIComponent(studentNumber)}/prepared-questions`);
+      setEditingQuestion(null);
       setPreparedDetail(detail);
       setView("preparation");
     } catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function savePreparedQuestion(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !preparedDetail || !editingQuestion) return;
+    if (![editingQuestion.question, editingQuestion.question_en, editingQuestion.reference_answer].every(v => v?.trim())) { setEditError("请填写题干、英文对照和参考答案"); return; }
+    if (editingQuestion.grading_points.length > 3 || editingQuestion.grading_points.some(v => !v.trim() || v.length > 5000)) { setEditError("请填写 1–3 条非空评分点，每条不超过 5000 字"); return; }
+    setBusy(true); setEditError("");
+    try {
+      await api(`/api/admin/quizzes/${selected.id}/students/${encodeURIComponent(preparedDetail.student_number)}/prepared-questions/${editingQuestion.job_id}/${editingQuestion.local_index}`, {
+        method: "PATCH", body: JSON.stringify({expected_revision: editingQuestion.revision,
+          question: editingQuestion.question, question_en: editingQuestion.question_en,
+          reference_answer: editingQuestion.reference_answer, grading_points: editingQuestion.grading_points}),
+      });
+      await loadPrepared(preparedDetail.student_number);
+      setToast("题目已保存");
+    } catch (error) { setEditError((error as Error).message); }
     finally { setBusy(false); }
   }
 
@@ -674,7 +695,7 @@ export function AdminApp() {
             <header><div><span className="problem-number">题目 {group.problem.id}</span><h2>{group.problem.title}</h2></div><span className="question-count">{group.questions.length} 个问题</span></header>
             <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><ProblemStatement className="statement" text={group.problem.statement} /><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
             <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
-              <div className="question-title-row"><div className="question-index">问题 {index + 1}</div></div><ProblemStatement className="generated-question" text={question.question} />
+              <div className="question-title-row"><div className="question-index">问题 {index + 1}</div>{preparedDetail.can_edit && <button className="link" disabled={busy} onClick={() => { setEditingQuestion({...question, grading_points: [...question.grading_points]}); setEditError(""); }}>编辑问题</button>}</div><ProblemStatement className="generated-question" text={question.question} />
               <QualityAudit review={question.quality} />
               {question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
               <dl><dt>参考答案</dt><dd>{question.reference_answer}</dd><dt>出题评分点</dt><dd>{question.grading_points.join("；")}</dd></dl>
@@ -705,6 +726,17 @@ export function AdminApp() {
         </>}
       </main>
 
+      {editingQuestion && <div className="question-edit-overlay"><form className="card question-edit-dialog" onSubmit={savePreparedQuestion} role="dialog" aria-modal="true" aria-labelledby="question-edit-title">
+        <h2 id="question-edit-title">编辑问题</h2><p className="muted">支持 Markdown 与公式。请同步核对英文对照、参考答案和评分点。</p>
+        <label>中文题干<textarea required maxLength={500} value={editingQuestion.question} onChange={e => setEditingQuestion({...editingQuestion, question:e.target.value})} /></label>
+        <label>英文对照<textarea required maxLength={800} value={editingQuestion.question_en || ""} onChange={e => setEditingQuestion({...editingQuestion, question_en:e.target.value})} /></label>
+        <details><summary>预览题干</summary><ProblemStatement text={editingQuestion.question} /><ProblemStatement className="question-en" text={editingQuestion.question_en || ""} /></details>
+        <label>参考答案<textarea required maxLength={5000} value={editingQuestion.reference_answer} onChange={e => setEditingQuestion({...editingQuestion, reference_answer:e.target.value})} /></label>
+        <label>评分点（每行一条，1–3 条）<textarea required maxLength={15002} value={editingQuestion.grading_points.join("\n")} onChange={e => setEditingQuestion({...editingQuestion, grading_points:e.target.value.split("\n")})} /></label>
+        <p className="muted">保存后原质量审核结论失效，可按需重新审核。</p>
+        {editError && <div className="error" role="alert">{editError}</div>}
+        <div className="inline-actions"><button type="button" className="secondary" disabled={busy} onClick={() => setEditingQuestion(null)}>取消</button><button disabled={busy}>{busy ? "正在保存…" : "保存修改"}</button></div>
+      </form></div>}
       {toast && <div className="toast" role="status"><Check size={17} />{toast}</div>}
       {confirm && <ConfirmDialog title={confirm.title} description={confirm.description} confirmLabel={confirm.confirmLabel} danger={confirm.danger} busy={busy} onCancel={() => setConfirm(null)} onConfirm={() => void runConfirmedAction()} />}
     </div>

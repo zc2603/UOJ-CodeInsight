@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, load_only
 
 from app.api.dependencies import AdminPrincipal, require_admin
+from app.services.prepared_edit import EditPreparedRequest, edit_prepared, revision as prepared_revision
 from app.services.quality_audit import presentation as quality_presentation
 from app.config import get_settings
 from app.database import get_db
@@ -393,12 +394,13 @@ async def prepared_questions(quiz_id: uuid.UUID, student_number: str, db: AsyncS
             continue
         generated = QuestionGenerationResult.model_validate(job.result_json)
         for item in generated.questions:
-            questions.append(dict(quality=quality_presentation(job, item.index), index=len(questions) + 1, type=item.type, question=item.question,
+            questions.append(dict(job_id=str(job.id), local_index=item.index, revision=prepared_revision(job.result_json), quality=quality_presentation(job, item.index), index=len(questions) + 1, type=item.type, question=item.question,
                 question_en=item.question_en, reference_answer=item.reference_answer, grading_points=item.grading_points,
                 problem=dict(id=snapshot.uoj_problem_id, title=snapshot.problem.title, statement=snapshot.problem.statement),
                 source_code=snapshot.source_code, language=snapshot.language,
                 student_answer=None, score=None, reason=None, confidence=None))
-    return dict(student_number=student_number, round_no=round_no, prepared_problem_count=len(questions) // 2,
+    latest = await db.scalar(select(Attempt).where(Attempt.participant_id == participant.id).order_by(Attempt.attempt_no.desc()).limit(1))
+    return dict(can_edit=latest is None or latest.status == AttemptStatus.RESET, student_number=student_number, round_no=round_no, prepared_problem_count=len(questions) // 2,
         preparation_total=len(jobs), questions=questions)
 
 
@@ -602,3 +604,9 @@ async def quality_detail(job_id: uuid.UUID, question_index: int, db: AsyncSessio
     if job is None or question_index not in (1, 2):
         raise HTTPException(404, "审核不存在")
     return quality_presentation(job, question_index)
+
+
+@router.patch("/quizzes/{quiz_id}/students/{student_number}/prepared-questions/{job_id}/{index}", dependencies=[Depends(require_admin)])
+async def update_prepared_question(quiz_id: uuid.UUID, student_number: str, job_id: uuid.UUID, index: int,
+    payload: EditPreparedRequest, db: AsyncSession = Depends(get_db)):
+    return await edit_prepared(db, quiz_id, student_number, job_id, index, payload)

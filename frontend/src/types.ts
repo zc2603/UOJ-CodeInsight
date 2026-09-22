@@ -69,6 +69,9 @@ export interface ResultRow {
 }
 
 export interface AttemptQuestionDetail {
+  job_id?: string;
+  local_index?: number;
+  revision?: string;
   quality?: QualityReview;
   review_required?: boolean;
   review_reason?: string | null;
@@ -102,6 +105,7 @@ export interface AttemptDetail {
 }
 
 export interface PreparedDetail {
+  can_edit: boolean;
   student_number: string;
   round_no: number;
   prepared_problem_count: number;

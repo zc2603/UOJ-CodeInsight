@@ -14,7 +14,7 @@ from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGene
 
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
-GENERATOR_VERSION = "question_generator_v19"
+GENERATOR_VERSION = "question_generator_v20"
 GRADER_VERSION = "grader_v11"
 
 KIND_RULES = {

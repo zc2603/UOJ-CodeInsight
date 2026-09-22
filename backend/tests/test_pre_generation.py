@@ -162,7 +162,7 @@ async def test_background_runner_persists_without_any_student_request(db):
     assert (await queue.progress(db, quiz_id))["completed"] == 1
     assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
     job = await db.get(GenerationJob, identity[0])
-    assert job.prompt_version == "question_generator_v19"
+    assert job.prompt_version == "question_generator_v20"
     assert job.result_json["questions"][1]["second_kind"] in ("trace", "boundary", "modification")
 
 

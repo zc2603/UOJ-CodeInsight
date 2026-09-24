@@ -444,7 +444,15 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
         if attempt.manual_override_score is not None
         else attempt.auto_score
     )
+    # Submission time is independent of model latency and later regrading.
+    completed_at = None
+    if attempt.timed_out or attempt.status == AttemptStatus.EXPIRED:
+        completed_at = ensure_utc(attempt.deadline_at) if attempt.deadline_at else None
+    elif questions and all(q.answer is not None for q in questions):
+        completed_at = max(ensure_utc(q.answer.submitted_at) for q in questions)
     return {
+        "completed_at": completed_at,
+        "timed_out": attempt.timed_out or attempt.status == AttemptStatus.EXPIRED,
         "id": str(attempt.id),
         "status": attempt.status,
         "student_number": attempt.participant.student_number,

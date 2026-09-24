@@ -79,3 +79,26 @@ def test_additive_migration_retains_legacy_questions_and_allows_new_types(tmp_pa
         assert connection.scalar(text("SELECT COUNT(*) FROM questions")) == 3
         assert connection.scalar(text("SELECT review_required FROM attempts WHERE id=1")) == 0
     engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_completion_time_is_submission_not_grading_time(db):
+    from datetime import timedelta
+    from app.models import AttemptStatus
+    from app.time_utils import ensure_utc
+    quiz, participant = await seed_participant(db)
+    first = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
+        student_number=participant.student_number, session_id="a")
+    args = dict(quiz_id=quiz.id, student_number=participant.student_number, session_id="a")
+    assert (await attempt_detail(first.attempt_id, db))["completed_at"] is None
+    for i in range(1,5): await submit_answer(db, **args, question_index=i, student_answer="test answer")
+    before = (await attempt_detail(first.attempt_id, db))["completed_at"]
+    assert before is not None
+    attempt = await db.get(Attempt, first.attempt_id)
+    attempt.finished_at = before + timedelta(minutes=5)
+    attempt.status = AttemptStatus.FINISHED
+    await db.commit()
+    assert (await attempt_detail(first.attempt_id, db))["completed_at"] == before
+    attempt.timed_out = True
+    await db.commit()
+    assert (await attempt_detail(first.attempt_id, db))["completed_at"] == ensure_utc(attempt.deadline_at)

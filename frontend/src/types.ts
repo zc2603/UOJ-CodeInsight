@@ -92,6 +92,8 @@ export interface AttemptQuestionDetail {
 }
 
 export interface AttemptDetail {
+  completed_at: string | null;
+  timed_out: boolean;
   review_required: boolean;
   id: string;
   status: string;

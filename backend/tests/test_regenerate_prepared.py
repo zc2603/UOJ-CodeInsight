@@ -76,3 +76,38 @@ async def test_regenerate_api_auth_scope_and_stale_request(db):
             assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_one_problem_copies_others_and_blocks_stale_requests(db):
+    from app.models import SubmissionSnapshot
+    quiz, participant = await prepare_seed(db)
+    await complete_one(db)
+    await complete_one(db)
+    jobs = (await db.scalars(select(GenerationJob).where(GenerationJob.participant_id == participant.id))).all()
+    target = jobs[0]
+    other = jobs[1]
+    other.quality_state = "done"
+    other.quality_result = {"questions": [{"index":1,"verdict":"pass","reason":"ok"}]}
+    old_text = other.result_json
+    await db.commit()
+    await queue.open_quiz(db, quiz.id)
+    snapshot = await db.get(SubmissionSnapshot, target.submission_snapshot_id)
+    with pytest.raises(HTTPException):
+        await queue.regenerate_prepared(db, quiz.id, participant.student_number, 1, 999999)
+    result = await queue.regenerate_prepared(db, quiz.id, participant.student_number, 1, snapshot.uoj_problem_id)
+    assert result == {"round_no":2,"queued":1}
+    new = (await db.scalars(select(GenerationJob).where(GenerationJob.round_no == 2))).all()
+    assert len(new) == 2 and sum(j.state == "queued" for j in new) == 1
+    copied = next(j for j in new if j.submission_snapshot_id == other.submission_snapshot_id)
+    assert copied.result_json == old_text and copied.quality_result == other.quality_result
+    assert copied.quality_state == "done"
+    assert target.state == "succeeded" and other.result_json == old_text
+    with pytest.raises(HTTPException):
+        await queue.regenerate_prepared(db, quiz.id, participant.student_number, 1, snapshot.uoj_problem_id)
+    with pytest.raises(HTTPException):
+        await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id, student_number=participant.student_number, session_id="a")
+    await complete_one(db)
+    await start_attempt(db, Settings(), NoGeneration(), quiz_id=quiz.id, student_number=participant.student_number, session_id="a")
+    with pytest.raises(HTTPException):
+        await queue.regenerate_prepared(db, quiz.id, participant.student_number, 2, snapshot.uoj_problem_id)

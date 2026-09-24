@@ -113,7 +113,7 @@ async def reopen_quiz(db, quiz_id):
     return quiz
 
 
-async def regenerate_prepared(db, quiz_id, student_number, expected_round):
+async def regenerate_prepared(db, quiz_id, student_number, expected_round, problem_id=None):
     await db.execute(select(GenerationControl).where(GenerationControl.id == 1).with_for_update())
     participant = await db.scalar(select(QuizParticipant).where(
         QuizParticipant.quiz_id == quiz_id, QuizParticipant.student_number == student_number).with_for_update())
@@ -137,9 +137,31 @@ async def regenerate_prepared(db, quiz_id, student_number, expected_round):
         SubmissionSnapshot.participant_id == participant.id, SubmissionSnapshot.uoj_score > 0))).scalars().all()
     if not snapshots:
         raise HTTPException(409, "没有可用于出题的有效提交")
-    await enqueue(db, snapshots, round_no=round_no + 1)
+    targets = snapshots if problem_id is None else [s for s in snapshots if s.uoj_problem_id == problem_id]
+    if not targets:
+        raise HTTPException(404, "该学生没有这道题的有效提交")
+    if problem_id is not None:
+        # Keep a complete next round so starting, progress and reset use one consistent set.
+        jobs = (await db.scalars(select(GenerationJob).where(GenerationJob.participant_id == participant.id,
+            GenerationJob.round_no == round_no).with_for_update().execution_options(populate_existing=True))).all()
+        by_snapshot = {j.submission_snapshot_id: j for j in jobs}
+        for snapshot in snapshots:
+            if snapshot.uoj_problem_id == problem_id:
+                continue
+            old = by_snapshot.get(snapshot.id)
+            if old is None:
+                raise HTTPException(409, "题目记录不完整，请刷新后重试")
+            fields = {key: getattr(old, key) for key in ("state", "attempts", "result_json", "raw_response",
+                "model", "prompt_version", "error")}
+            # Completed audits still apply to unchanged text; never duplicate a paid in-flight audit.
+            if old.quality_state in ("done", "failed", "not_requested"):
+                fields.update({key: getattr(old, key) for key in ("quality_state", "quality_result", "quality_raw",
+                    "quality_error", "quality_model", "quality_version", "quality_acknowledged", "quality_finished_at")})
+            db.add(GenerationJob(quiz_id=quiz_id, participant_id=participant.id,
+                submission_snapshot_id=snapshot.id, round_no=round_no + 1, **fields))
+    await enqueue(db, targets, round_no=round_no + 1)
     await db.commit()
-    return {"round_no": round_no + 1, "queued": len(snapshots)}
+    return {"round_no": round_no + 1, "queued": len(targets)}
 
 
 async def retry_failed(db, quiz_id):

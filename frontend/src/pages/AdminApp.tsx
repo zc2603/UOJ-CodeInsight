@@ -423,20 +423,20 @@ export function AdminApp() {
     finally { setBusy(false); }
   }
 
-  function regeneratePreparedQuestions() {
+  function regeneratePreparedQuestions(problemId?: number) {
     if (!selected || !preparedDetail) return;
     const quiz = selected;
     const detail = preparedDetail;
     setConfirm({
-      title: "重新生成这名学生的题目？",
-      description: `将为 ${detail.student_number} 的 ${detail.preparation_total} 道有效题目重新出题，产生模型调用费用。新题全部完成前，该学生暂不能开始测评。其他学生不受影响。`,
+      title: problemId ? `重新生成题目 ${problemId} 的两个问题？` : "重新生成这名学生的题目？",
+      description: problemId ? `将重新生成 ${detail.student_number} 的题目 ${problemId} 的问题 1 和问题 2，产生出题及已启用审核的模型调用费用。其他原题的问题保留。新题完成前，该学生暂不能开始测评。` : `将为 ${detail.student_number} 的 ${detail.preparation_total} 道有效题目重新出题，产生模型调用费用。新题全部完成前，该学生暂不能开始测评。其他学生不受影响。`,
       confirmLabel: "确认重新生成",
       action: async () => {
         setBusy(true);
         setMessage("");
         try {
           await api(`/api/admin/quizzes/${quiz.id}/students/${encodeURIComponent(detail.student_number)}/regenerate-questions`, {
-            method: "POST", body: JSON.stringify({ expected_round: detail.round_no }),
+            method: "POST", body: JSON.stringify({ expected_round: detail.round_no, problem_id: problemId }),
           });
           setPreparedDetail(null);
           await showResults(quiz);
@@ -694,9 +694,9 @@ export function AdminApp() {
         </>}
 
         {view === "preparation" && preparedDetail && <>
-          <header><div><button className="back" onClick={() => setView("results")}><ArrowLeft size={15} />返回测评结果</button><div className="eyebrow">QUESTION PREVIEW</div><h1 className="mono">{preparedDetail.student_number}</h1><p>已准备 {preparedDetail.prepared_problem_count} / {preparedDetail.preparation_total} 道题目，共 {preparedDetail.questions.length} 个问题</p></div><div className="inline-actions"><span className="status-pill status-ready">预生成题目</span><button className="secondary" disabled={busy} onClick={regeneratePreparedQuestions}><RefreshCw size={16} />重新生成题目</button></div></header>
+          <header><div><button className="back" onClick={() => setView("results")}><ArrowLeft size={15} />返回测评结果</button><div className="eyebrow">QUESTION PREVIEW</div><h1 className="mono">{preparedDetail.student_number}</h1><p>已准备 {preparedDetail.prepared_problem_count} / {preparedDetail.preparation_total} 道题目，共 {preparedDetail.questions.length} 个问题</p></div><div className="inline-actions"><span className="status-pill status-ready">预生成题目</span><button className="secondary" disabled={busy} onClick={() => regeneratePreparedQuestions()}><RefreshCw size={16} />重新生成题目</button></div></header>
           <div className="problem-review-list">{groupAttemptQuestions(preparedDetail.questions).map(group => <section className="card problem-review" key={group.problem.id}>
-            <header><div><span className="problem-number">题目 {group.problem.id}</span><h2>{group.problem.title}</h2></div><span className="question-count">{group.questions.length} 个问题</span></header>
+            <header><div><span className="problem-number">题目 {group.problem.id}</span><h2>{group.problem.title}</h2></div><div className="inline-actions"><span className="question-count">{group.questions.length} 个问题</span>{preparedDetail.can_edit && <button className="secondary" disabled={busy} onClick={() => regeneratePreparedQuestions(group.problem.id)}><RefreshCw size={15} />重新生成这道题</button>}</div></header>
             <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><ProblemStatement className="statement" text={group.problem.statement} /><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
             <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
               <div className="question-title-row"><div className="question-index">问题 {index + 1}</div>{preparedDetail.can_edit && <button className="link" disabled={busy} onClick={() => { setEditingQuestion({...question, grading_points: [...question.grading_points]}); setEditError(""); }}>编辑问题</button>}</div><ProblemStatement className="generated-question" text={question.question} />

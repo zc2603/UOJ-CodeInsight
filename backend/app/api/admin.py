@@ -407,7 +407,7 @@ async def prepared_questions(quiz_id: uuid.UUID, student_number: str, db: AsyncS
 @router.post("/quizzes/{quiz_id}/students/{student_number}/regenerate-questions", dependencies=[Depends(require_admin)])
 async def regenerate_prepared_questions(quiz_id: uuid.UUID, student_number: str,
     payload: RegeneratePreparedRequest, db: AsyncSession = Depends(get_db)):
-    return await regenerate_prepared(db, quiz_id, student_number, payload.expected_round)
+    return await regenerate_prepared(db, quiz_id, student_number, payload.expected_round, payload.problem_id)
 
 
 @router.get("/attempts/{attempt_id}", dependencies=[Depends(require_admin)])

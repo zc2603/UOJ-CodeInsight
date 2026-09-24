@@ -74,6 +74,7 @@ class QuizCreatedResponse(BaseModel):
 
 
 class RegeneratePreparedRequest(BaseModel):
+    problem_id: int | None = Field(default=None, ge=1)
     expected_round: int = Field(ge=1)
 
 

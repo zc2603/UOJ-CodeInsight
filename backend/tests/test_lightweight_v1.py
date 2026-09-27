@@ -9,8 +9,9 @@ from test_attempt_flow import db
 from test_import_integration import FakeRepository, NOW, make_submission
 from app.config import Settings, get_settings
 from app.integrations.uoj.schemas import UOJProblem, UOJSubmissionRequirement
-from app.models import (Answer, Attempt, AttemptStatus, GenerationControl, GenerationJob,
-    Question, QuizProblemSnapshot, ReviewIssue)
+from app.models import (Answer, AnswerDraft, Appeal, Attempt, AttemptStatus, GenerationControl, GenerationJob,
+    Question, QuizProblemSnapshot, ReviewIssue, ScoreAudit)
+from app.api.admin import delete_quiz
 from app.schemas.api import LightweightDraftRequest, LightweightSubmitRequest, QuizCreateRequest
 from app.services import generation_service
 from app.services.grading_queue import claim_grading
@@ -49,12 +50,15 @@ def bundle():
         selected[("231250002", i)] = ImportedSubmission(
             submission=make_submission(100 + i, "231250002", i, 100, i),
             source_code=f"int main() {{ return {i}; }}")
+    selected[("231250003", 13)] = ImportedSubmission(
+        submission=make_submission(313, "231250003", 13, 100, 13),
+        source_code="int main() { return 13; }")
     return ImportBundle(contest=meta, cutoff=NOW - timedelta(days=1),
-        problems=problems, students=["231250001", "231250002"], selected=selected, issues=[])
+        problems=problems, students=["231250001", "231250002", "231250003"], selected=selected, issues=[])
 
 
-async def prepared_quiz(db):
-    quiz, _ = await persist_quiz(db, bundle(), QuizCreateRequest(contest_id=7))
+async def prepared_quiz(db, request=None):
+    quiz, _ = await persist_quiz(db, bundle(), request or QuizCreateRequest(contest_id=7))
     db.add(GenerationControl(id=1))
     await db.commit()
     provider = MockLLMProvider()
@@ -87,6 +91,25 @@ async def test_creation_freezes_largest_id_as_one_question_and_missing_problem_t
         student_number="231250002", session_id="second")
     assert second.question_count == 3 and second.duration_minutes == 15
     assert [q["problem_id"] for q in second.questions] == [11, 11, 13]
+    third = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
+        student_number="231250003", session_id="third")
+    assert third.question_count == 1 and third.duration_minutes == 5
+    assert third.questions[0]["problem_id"] == 13
+
+
+@pytest.mark.asyncio
+async def test_fixed_duration_and_invalid_choice_configuration(db):
+    with pytest.raises(ValueError):
+        await persist_quiz(db, bundle(), QuizCreateRequest(contest_id=7,
+            choice_problem_ids=[11, 11]))
+    with pytest.raises(ValueError):
+        await persist_quiz(db, bundle(), QuizCreateRequest(contest_id=7,
+            choice_problem_ids=[99]))
+    quiz = await prepared_quiz(db, QuizCreateRequest(contest_id=7,
+        time_mode="fixed", duration_minutes=17))
+    third = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
+        student_number="231250003", session_id="fixed")
+    assert third.question_count == 1 and third.duration_minutes == 17
 
 
 @pytest.mark.asyncio
@@ -135,6 +158,8 @@ async def test_draft_submit_review_publish_and_appeal(db):
     assert len((await db.scalars(select(ReviewIssue))).all()) == 1
     quiz.end_time = datetime.now(timezone.utc) - timedelta(seconds=1)
     await db.commit()
+    hidden = await student_result(db, quiz.id, "231250001")
+    assert hidden == {"published": False, "message": "成绩尚未公布"}
     with pytest.raises(HTTPException) as blocked:
         await publish(db, quiz.id, "teacher")
     assert blocked.value.status_code == 409
@@ -146,6 +171,9 @@ async def test_draft_submit_review_publish_and_appeal(db):
     result = await student_result(db, quiz.id, "231250001")
     assert result["score"] == 10 and result["max_score"] == 10
     assert all("correct_choice_id" not in q and "reference_answer" not in q for q in result["questions"])
+    await publish(db, quiz.id, "teacher", include_answers=True)
+    disclosed = await student_result(db, quiz.id, "231250001")
+    assert all("reference_answer" in q and "correct_choice_id" in q for q in disclosed["questions"])
     appeal = await request_appeal(db, quiz.id, "231250001", question.id,
         reason="请再看一下", request_key="appeal-synthetic-1")
     same = await request_appeal(db, quiz.id, "231250001", question.id,
@@ -157,6 +185,9 @@ async def test_draft_submit_review_publish_and_appeal(db):
     await resolve_appeal(db, uuid.UUID(appeal["id"]), actor="teacher",
         resolution="已核查，维持原分", expected_version=attempt.score_version, score=None)
     assert (await student_result(db, quiz.id, "231250001"))["questions"][0]["appeals"][0]["state"] == "resolved"
+    assert (await delete_quiz(quiz.id, db))["deleted"]
+    for model in (AnswerDraft, Appeal, ReviewIssue, ScoreAudit):
+        assert not (await db.scalars(select(model))).all()
 
 
 @pytest.mark.asyncio

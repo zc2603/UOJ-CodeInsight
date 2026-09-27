@@ -10,12 +10,25 @@ import httpx
 from pydantic import ValidationError, model_validator
 
 from app.config import Settings
-from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGenerationResult
+from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGenerationResult, LightweightGenerationResult, LightweightGradingResult
 
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 GENERATOR_VERSION = "question_generator_v20"
 GRADER_VERSION = "grader_v11"
+LIGHTWEIGHT_GENERATOR_VERSION = "question_generator_lightweight_v1"
+LIGHTWEIGHT_GRADER_VERSION = "grader_lightweight_v1"
+
+
+def lightweight_generation_schema(kind: str | None):
+    class Assigned(LightweightGenerationResult):
+        @model_validator(mode="after")
+        def check_assignment(self):
+            expected = 2 if kind else 1
+            if len(self.questions) != expected or (kind and self.questions[1].type != kind):
+                raise ValueError("generated questions do not match frozen configuration")
+            return self
+    return Assigned
 
 KIND_RULES = {
     "trace": "- 围绕学生代码中的一个具体机制，给出可用少量步骤手工追踪的合法小情境，优先询问明确执行位置的一个局部状态或结果。\n- 避免仅凭原题规则即可作答的最终输出题，以及大量算术或长序列模拟；\n- 只要求结果，不附加解释任务。\n- type=trace。",
@@ -149,9 +162,35 @@ class LLMProvider(ABC):
     ) -> tuple[GradingResult, str]:
         raise NotImplementedError
 
+    async def generate_lightweight(self, **kwargs) -> tuple[LightweightGenerationResult, str]:
+        raise NotImplementedError
+
+    async def grade_lightweight(self, **kwargs) -> tuple[LightweightGradingResult, str]:
+        raise NotImplementedError
+
 
 class MockLLMProvider(LLMProvider):
     model_name = "mock"
+
+    async def generate_lightweight(self, **kwargs) -> tuple[LightweightGenerationResult, str]:
+        kind = kwargs.get("second_question_kind")
+        questions = [dict(index=1, type="explanation", response_format="short_answer",
+            question="代码中这个状态更新起什么作用？", question_en="What does this state update do?",
+            core_idea="解释状态更新的局部作用", reference_answer="它更新当前状态以供下一步使用。")]
+        if kind:
+            questions.append(dict(index=2, type=kind, response_format="single_choice",
+                question="按这段代码执行一步后，哪个状态正确？",
+                question_en="Which state follows one step of this code?",
+                choices=[dict(id=key, text=f"状态 {key}", text_en=f"State {key}") for key in "ABCD"],
+                correct_choice_id="B", reference_answer="B 符合局部更新。"))
+        raw = json.dumps(dict(schema_version="lightweight_v1", questions=questions), ensure_ascii=False)
+        return lightweight_generation_schema(kind).model_validate_json(raw), raw
+
+    async def grade_lightweight(self, **kwargs) -> tuple[LightweightGradingResult, str]:
+        grades = [dict(question_index=q["question_index"], score=2 if len(str(q["student_answer"]).strip()) >= 10 else 1,
+            reason="Mock 开发评分。", confidence=0.5) for q in kwargs["question_payload"]]
+        raw = json.dumps(dict(grades=grades), ensure_ascii=False)
+        return LightweightGradingResult.model_validate_json(raw), raw
 
     async def generate_questions(self, **_: str) -> tuple[QuestionGenerationResult, str]:
         kind = _.get("second_question_kind", "trace")
@@ -282,6 +321,30 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 第二题额外含 second_kind，值必须为 {second_question_kind}。
 """
         return await self._request_json(system, user, schema)
+
+    async def generate_lightweight(self, *, title: str, statement: str, language: str,
+        source_code: str, second_question_kind: str | None) -> tuple[LightweightGenerationResult, str]:
+        system = (PROMPTS / f"{LIGHTWEIGHT_GENERATOR_VERSION}.txt").read_text(encoding="utf-8")
+        if second_question_kind:
+            system += f"\n本次第二问的认知类型必须是 {second_question_kind}；不能换题型。"
+        else:
+            system += "\n本次仅生成第一道简答题。"
+        user = (f"标题：{encode_untrusted(title)}\n题面：{encode_untrusted(statement)}\n"
+            f"语言：{encode_untrusted(language)}\n编号源码：{encode_untrusted(number_source_lines(source_code))}\n"
+            f"schema_version=lightweight_v1，问题数={2 if second_question_kind else 1}。")
+        return await self._request_json(system, user, lightweight_generation_schema(second_question_kind))
+
+    async def grade_lightweight(self, *, title: str, statement: str, language: str,
+        source_code: str, question_payload: list[dict[str, object]]) -> tuple[LightweightGradingResult, str]:
+        system = (PROMPTS / f"{LIGHTWEIGHT_GRADER_VERSION}.txt").read_text(encoding="utf-8")
+        user = (f"标题：{encode_untrusted(title)}\n题面：{encode_untrusted(statement)}\n"
+            f"语言：{encode_untrusted(language)}\n编号源码：{encode_untrusted(number_source_lines(source_code))}\n"
+            f"待评分简答题：{encode_untrusted(question_payload)}")
+        result, raw = await self._request_json(system, user, LightweightGradingResult)
+        expected = {int(q["question_index"]) for q in question_payload}
+        if {g.question_index for g in result.grades} != expected:
+            raise LLMProviderError("简答评分题号不匹配", raw_response=raw)
+        return result, raw
 
     async def grade_answers(
         self,

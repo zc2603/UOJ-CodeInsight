@@ -10,6 +10,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import selectinload
 from app.models import GenerationJob, SubmissionSnapshot
 from app.services.llm_provider import PROMPTS, encode_untrusted, number_source_lines, create_llm_provider
+from app.config import get_settings
 
 VERSION = "question_quality_v7"
 logger = logging.getLogger(__name__)
@@ -45,8 +46,12 @@ def presentation(job, index):
 
 
 async def claim(db, now=None):
+    if not get_settings().quality_audit_enabled:
+        await db.commit()
+        return None
     now = now or datetime.now(timezone.utc)
-    job = await db.scalar(select(GenerationJob).where(GenerationJob.state == "succeeded", or_(
+    job = await db.scalar(select(GenerationJob).where(GenerationJob.state == "succeeded",
+        GenerationJob.prompt_version != "lightweight_v1", or_(
         GenerationJob.quality_state == "queued", and_(GenerationJob.quality_state == "running",
             GenerationJob.quality_lease_until <= now)))
         .order_by(GenerationJob.created_at).limit(1).with_for_update(skip_locked=True)
@@ -92,6 +97,8 @@ async def renew(factory, identity):
 
 
 async def run(factory, settings, provider, identity):
+    if not settings.quality_audit_enabled:
+        return
     async def audit():
         async with factory() as db:
             job = await db.get(GenerationJob, identity[0])

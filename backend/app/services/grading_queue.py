@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import selectinload
-from app.models import Answer, Attempt, AttemptStatus, Question, LLMCallLog
+from app.models import Answer, AnswerDraft, Attempt, AttemptStatus, Question, LLMCallLog, Quiz, QuizParticipant
 from app.services.llm_provider import GRADER_VERSION
 from app.services.grading_service import grade_attempt
 
@@ -27,6 +27,11 @@ async def claim_grading(db, now=None):
     is_timeout = attempt.status in {AttemptStatus.EXPIRED, AttemptStatus.IN_PROGRESS}
     if is_timeout:
         attempt.timed_out = True
+        if attempt.assessment_version == "lightweight_v1":
+            from app.services.lightweight_submission import freeze
+            drafts = {d.question_id: d for d in (await db.scalars(select(AnswerDraft)
+                .where(AnswerDraft.attempt_id == attempt.id))).all()}
+            await freeze(db, attempt, source="timeout", now=attempt.deadline_at or now, drafts=drafts)
     if not attempt.questions or (not is_timeout and any(q.answer is None for q in attempt.questions)):
         attempt.status = AttemptStatus.GRADING_ERROR
         attempt.grading_token = None
@@ -105,6 +110,14 @@ async def grading_worker(factory, settings, provider):
 
 async def enqueue_regrade(db, attempt_id):
     from fastapi import HTTPException
+    identity = await db.get(Attempt, attempt_id)
+    if identity is None:
+        raise HTTPException(404, "Attempt 不存在")
+    await db.execute(select(QuizParticipant.id).where(QuizParticipant.id == identity.participant_id).with_for_update())
+    quiz = await db.scalar(select(Quiz).where(Quiz.id == identity.quiz_id).with_for_update()
+        .execution_options(populate_existing=True))
+    if quiz.published_at is not None:
+        raise HTTPException(409, "成绩公布后不能自动重新评分")
     attempt = await db.scalar(select(Attempt).where(Attempt.id == attempt_id)
         .with_for_update().execution_options(populate_existing=True)
         .options(selectinload(Attempt.questions).selectinload(Question.answer)))

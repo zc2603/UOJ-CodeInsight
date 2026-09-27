@@ -1,0 +1,186 @@
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from fastapi import HTTPException
+from sqlalchemy import select
+
+from test_attempt_flow import db
+from test_import_integration import FakeRepository, NOW, make_submission
+from app.config import Settings, get_settings
+from app.integrations.uoj.schemas import UOJProblem, UOJSubmissionRequirement
+from app.models import (Answer, Attempt, AttemptStatus, GenerationControl, GenerationJob,
+    Question, QuizProblemSnapshot, ReviewIssue)
+from app.schemas.api import LightweightDraftRequest, LightweightSubmitRequest, QuizCreateRequest
+from app.services import generation_service
+from app.services.grading_queue import claim_grading
+from app.services.grading_service import grade_attempt
+from app.services.import_service import ImportBundle, ImportedSubmission
+from app.services.lightweight_submission import save_draft, submit
+from app.services.llm_provider import MockLLMProvider
+from app.services.publication import (publish, score_question, student_result, request_appeal,
+    resolve_appeal)
+from app.services.quiz_service import persist_quiz, start_attempt
+from app.time_utils import ensure_utc
+
+
+@pytest.fixture(autouse=True)
+def enable_v1_for_synthetic_tests(monkeypatch):
+    monkeypatch.setenv("LIGHTWEIGHT_CREATION_ENABLED", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def bundle():
+    contest = FakeRepository()
+    from app.integrations.uoj.schemas import UOJContest
+    meta = UOJContest(contest_id=7, name="Synthetic", start_time=NOW - timedelta(days=2),
+        end_time=NOW - timedelta(days=1), status="finished")
+    problems = [UOJProblem(problem_id=i, title=f"P{i}", statement="synthetic statement",
+        submission_requirements=[UOJSubmissionRequirement(name="answer", type="source code",
+            file_name="answer.code")]) for i in (11, 12, 13)]
+    selected = {}
+    for i in (11, 12, 13):
+        selected[("231250001", i)] = ImportedSubmission(
+            submission=make_submission(i, "231250001", i, 100, i),
+            source_code=f"int main() {{ return {i}; }}")
+    for i in (11, 13):
+        selected[("231250002", i)] = ImportedSubmission(
+            submission=make_submission(100 + i, "231250002", i, 100, i),
+            source_code=f"int main() {{ return {i}; }}")
+    return ImportBundle(contest=meta, cutoff=NOW - timedelta(days=1),
+        problems=problems, students=["231250001", "231250002"], selected=selected, issues=[])
+
+
+async def prepared_quiz(db):
+    quiz, _ = await persist_quiz(db, bundle(), QuizCreateRequest(contest_id=7))
+    db.add(GenerationControl(id=1))
+    await db.commit()
+    provider = MockLLMProvider()
+    while True:
+        identity = await generation_service.claim(db, Settings(), "mock")
+        if identity is None:
+            break
+        job = await db.get(GenerationJob, identity[0])
+        result, raw = await provider.generate_lightweight(second_question_kind=job.second_kind)
+        assert await generation_service.finish(db, Settings(), identity, result=result, raw=raw)
+    await generation_service.open_quiz(db, quiz.id)
+    return quiz
+
+
+@pytest.mark.asyncio
+async def test_creation_freezes_largest_id_as_one_question_and_missing_problem_time(db):
+    quiz = await prepared_quiz(db)
+    snapshots = (await db.scalars(select(QuizProblemSnapshot).where(
+        QuizProblemSnapshot.quiz_id == quiz.id).order_by(QuizProblemSnapshot.display_order))).all()
+    assert [(p.uoj_problem_id, p.include_choice) for p in snapshots] == [
+        (11, True), (12, True), (13, False)]
+    first = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
+        student_number="231250001", session_id="first")
+    assert first.assessment_version == "lightweight_v1"
+    assert first.question_count == 5 and first.duration_minutes == 25
+    assert len(first.questions) == 5
+    assert all("correct_choice_id" not in q and "reference_answer" not in q and "core_idea" not in q
+        for q in first.questions)
+    second = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
+        student_number="231250002", session_id="second")
+    assert second.question_count == 3 and second.duration_minutes == 15
+    assert [q["problem_id"] for q in second.questions] == [11, 11, 13]
+
+
+@pytest.mark.asyncio
+async def test_draft_submit_review_publish_and_appeal(db):
+    quiz = await prepared_quiz(db)
+    view = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
+        student_number="231250001", session_id="writer")
+    first = view.questions[0]
+    args = dict(attempt_id=view.attempt_id, quiz_id=quiz.id, student_number="231250001", session_id="writer")
+    saved = await save_draft(db, **args, payload=LightweightDraftRequest(
+        question_id=uuid.UUID(first["id"]), expected_revision=0, answer_text="我认为这里在更新当前状态",
+        dispute=True))
+    assert saved["draft"]["revision"] == 1
+    with pytest.raises(HTTPException) as stale:
+        await save_draft(db, **args, payload=LightweightDraftRequest(
+            question_id=uuid.UUID(first["id"]), expected_revision=0, answer_text="旧标签"))
+    assert stale.value.status_code == 409
+    items = []
+    for q in view.questions:
+        items.append(LightweightDraftRequest(question_id=uuid.UUID(q["id"]),
+            expected_revision=1 if q["id"] == first["id"] else 0,
+            answer_text="说明状态更新的局部作用" if q["response_format"] == "short_answer" else "",
+            choice_id="B" if q["response_format"] == "single_choice" else None,
+            dispute=q["id"] == first["id"]))
+    payload = LightweightSubmitRequest(attempt_id=view.attempt_id,
+        idempotency_key="synthetic-submit-1", drafts=items)
+    result = await submit(db, quiz_id=quiz.id, student_number="231250001",
+        session_id="writer", payload=payload)
+    assert result["source"] == "manual"
+    assert (await submit(db, quiz_id=quiz.id, student_number="231250001",
+        session_id="writer", payload=payload))["submitted"]
+    attempt = await db.get(Attempt, view.attempt_id)
+    assert attempt.submitted_at and attempt.status == AttemptStatus.GRADING
+
+    class Counting(MockLLMProvider):
+        calls = 0
+        async def grade_lightweight(self, **kwargs):
+            self.calls += 1
+            assert all(q["student_answer"] for q in kwargs["question_payload"])
+            return await super().grade_lightweight(**kwargs)
+    provider = Counting()
+    await grade_attempt(db, provider, attempt.id)
+    assert provider.calls == 3
+    attempt = await db.get(Attempt, attempt.id)
+    assert attempt.status == AttemptStatus.FINISHED and attempt.review_required
+    assert len((await db.scalars(select(ReviewIssue))).all()) == 1
+    quiz.end_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db.commit()
+    with pytest.raises(HTTPException) as blocked:
+        await publish(db, quiz.id, "teacher")
+    assert blocked.value.status_code == 409
+    question = await db.get(Question, uuid.UUID(first["id"]))
+    await score_question(db, attempt.id, question.id, score=2, reason="确认理解",
+        actor="teacher", expected_version=attempt.score_version)
+    published = await publish(db, quiz.id, "teacher")
+    assert published["published"]
+    result = await student_result(db, quiz.id, "231250001")
+    assert result["score"] == 10 and result["max_score"] == 10
+    assert all("correct_choice_id" not in q and "reference_answer" not in q for q in result["questions"])
+    appeal = await request_appeal(db, quiz.id, "231250001", question.id,
+        reason="请再看一下", request_key="appeal-synthetic-1")
+    same = await request_appeal(db, quiz.id, "231250001", question.id,
+        reason="请再看一下", request_key="appeal-synthetic-1")
+    assert same["id"] == appeal["id"]
+    with pytest.raises(HTTPException):
+        await request_appeal(db, quiz.id, "231250001", question.id,
+            reason="重复", request_key="appeal-synthetic-2")
+    await resolve_appeal(db, uuid.UUID(appeal["id"]), actor="teacher",
+        resolution="已核查，维持原分", expected_version=attempt.score_version, score=None)
+    assert (await student_result(db, quiz.id, "231250001"))["questions"][0]["appeals"][0]["state"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_timeout_collects_every_saved_draft_and_rejects_late_edit(db):
+    quiz = await prepared_quiz(db)
+    view = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
+        student_number="231250001", session_id="writer")
+    for q in view.questions:
+        await save_draft(db, attempt_id=view.attempt_id, quiz_id=quiz.id,
+            student_number="231250001", session_id="writer", payload=LightweightDraftRequest(
+                question_id=uuid.UUID(q["id"]), expected_revision=0,
+                answer_text=f"已保存的第{q['index']}题" if q["response_format"] == "short_answer" else "",
+                choice_id="A" if q["response_format"] == "single_choice" else None))
+    attempt = await db.get(Attempt, view.attempt_id)
+    attempt.deadline_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db.commit()
+    with pytest.raises(HTTPException) as late:
+        await save_draft(db, attempt_id=view.attempt_id, quiz_id=quiz.id,
+            student_number="231250001", session_id="writer", payload=LightweightDraftRequest(
+                question_id=uuid.UUID(view.questions[0]["id"]), expected_revision=1, answer_text="迟到"))
+    assert late.value.status_code == 410
+    identity = await claim_grading(db)
+    assert identity and identity[0] == attempt.id
+    answers = (await db.scalars(select(Answer).join(Question).where(Question.attempt_id == attempt.id))).all()
+    assert len(answers) == 5
+    assert all(a.student_answer or a.choice_id for a in answers)
+    assert ensure_utc(attempt.submitted_at) == ensure_utc(attempt.deadline_at)

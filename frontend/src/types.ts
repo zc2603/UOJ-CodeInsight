@@ -8,6 +8,9 @@ export type AttemptStatus =
   | "GRADING_ERROR";
 
 export interface StudentQuestion {
+  assessment_version: string;
+  duration_minutes: number | null;
+  questions: LightweightQuestion[];
   timed_out: boolean;
   draft_answer: string;
   draft_revision: number;
@@ -28,12 +31,39 @@ export interface StudentQuestion {
   question_text_en: string | null;
 }
 
+export interface LightweightDraft {
+  answer_text: string;
+  choice_id: "A" | "B" | "C" | "D" | null;
+  revisit: boolean;
+  dispute: boolean;
+  dispute_reason: string | null;
+  revision: number;
+}
+
+export interface LightweightQuestion {
+  id: string;
+  index: number;
+  type: string;
+  response_format: "short_answer" | "single_choice";
+  question: string;
+  question_en: string;
+  choices: { id: "A" | "B" | "C" | "D"; text: string; text_en: string }[] | null;
+  problem_id: number;
+  problem_title: string;
+  problem_statement: string;
+  source_code: string;
+  language: string;
+  draft: LightweightDraft;
+}
+
 export interface PreparationProgress {
   total: number; completed: number; running: number; queued: number; failed: number; cancelled: number;
   students_total: number; students_ready: number; ready: boolean;
 }
 
 export interface QuizSummary {
+  assessment_version?: string;
+  scores_published?: boolean;
   pre_generated: boolean;
   preparation: PreparationProgress | null;
   id: string;
@@ -69,6 +99,17 @@ export interface ResultRow {
 }
 
 export interface AttemptQuestionDetail {
+  id?: string;
+  choice_id?: string | null;
+  response_format?: string;
+  choices?: { id: string; text: string; text_en: string }[] | null;
+  correct_choice_id?: string | null;
+  core_idea?: string | null;
+  effective_score?: number | null;
+  manual_score?: number | null;
+  manual_reason?: string | null;
+  student_dispute?: boolean;
+  dispute_reason?: string | null;
   job_id?: string;
   local_index?: number;
   revision?: string;
@@ -92,6 +133,8 @@ export interface AttemptQuestionDetail {
 }
 
 export interface AttemptDetail {
+  assessment_version?: string;
+  score_version?: number;
   completed_at: string | null;
   timed_out: boolean;
   review_required: boolean;

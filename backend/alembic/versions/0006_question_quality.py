@@ -8,6 +8,8 @@ depends_on = None
 
 
 def upgrade():
+    inspector = sa.inspect(op.get_bind())
+    existing = {column["name"] for column in inspector.get_columns("generation_jobs")}
     for column in [
         sa.Column("quality_state", sa.String(20), nullable=False, server_default="not_requested"),
         sa.Column("quality_token", sa.String(36)),
@@ -18,8 +20,10 @@ def upgrade():
         sa.Column("quality_version", sa.String(50)), sa.Column("quality_acknowledged", sa.JSON()),
         sa.Column("quality_finished_at", sa.DateTime(timezone=True)),
     ]:
-        op.add_column("generation_jobs", column)
-    op.create_index("ix_quality_claim", "generation_jobs", ["quality_state", "quality_lease_until"])
+        if column.name not in existing:
+            op.add_column("generation_jobs", column)
+    if "ix_quality_claim" not in {index["name"] for index in inspector.get_indexes("generation_jobs")}:
+        op.create_index("ix_quality_claim", "generation_jobs", ["quality_state", "quality_lease_until"])
 
 
 def downgrade():

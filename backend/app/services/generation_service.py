@@ -10,8 +10,8 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
-from app.models import Attempt, AttemptStatus, QuizParticipant, GenerationControl, GenerationJob, GenerationRun, Quiz, QuizStatus, SubmissionSnapshot
-from app.services.llm_provider import GENERATOR_VERSION
+from app.models import Attempt, AttemptStatus, QuizParticipant, GenerationControl, GenerationJob, GenerationRun, Quiz, QuizStatus, SubmissionSnapshot, QuizProblemSnapshot
+from app.services.llm_provider import GENERATOR_VERSION, LIGHTWEIGHT_GENERATOR_VERSION
 from app.services.question_policy import allocated_kind
 from app.time_utils import ensure_utc
 
@@ -19,9 +19,21 @@ logger = logging.getLogger(__name__)
 
 
 async def enqueue(db, snapshots, round_no=1):
+    if not snapshots:
+        return
+    quiz = await db.get(Quiz, snapshots[0].quiz_id)
+    choice_ids = []
+    if quiz.assessment_version == "lightweight_v1":
+        choice_ids = (await db.execute(select(SubmissionSnapshot.id)
+            .join(QuizProblemSnapshot, QuizProblemSnapshot.id == SubmissionSnapshot.problem_snapshot_id)
+            .where(SubmissionSnapshot.quiz_id == quiz.id, QuizProblemSnapshot.include_choice.is_(True),
+                SubmissionSnapshot.uoj_score > 0))).scalars().all()
+    rank = {str(value): i for i, value in enumerate(sorted(choice_ids, key=str))}
     for snapshot in snapshots:
+        second = ("trace", "boundary", "modification")[rank[str(snapshot.id)] % 3] if str(snapshot.id) in rank else None
         db.add(GenerationJob(quiz_id=snapshot.quiz_id, participant_id=snapshot.participant_id,
-            submission_snapshot_id=snapshot.id, round_no=round_no, prompt_version=GENERATOR_VERSION))
+            submission_snapshot_id=snapshot.id, round_no=round_no,
+            second_kind=second, prompt_version=LIGHTWEIGHT_GENERATOR_VERSION if quiz.assessment_version == "lightweight_v1" else GENERATOR_VERSION))
 
 
 def summarize(jobs):
@@ -101,6 +113,8 @@ async def reopen_quiz(db, quiz_id):
         .execution_options(populate_existing=True))).scalar_one_or_none()
     if quiz is None:
         raise HTTPException(404, "测评不存在")
+    if quiz.published_at is not None:
+        raise HTTPException(409, "成绩已公布，不能重新开放")
     if quiz.status == QuizStatus.DRAFT:
         raise HTTPException(409, "尚未发布的测评请通过开放测评入口发布")
     now = datetime.now(timezone.utc)
@@ -120,6 +134,8 @@ async def regenerate_prepared(db, quiz_id, student_number, expected_round, probl
     if participant is None:
         raise HTTPException(404, "学生不属于本场测评")
     quiz = await db.get(Quiz, quiz_id)
+    if quiz.published_at is not None:
+        raise HTTPException(409, "成绩已公布，不能重新生成")
     if not quiz.pre_generate:
         raise HTTPException(409, "本场测评不支持预生成题目")
     latest = await db.scalar(select(Attempt).where(Attempt.participant_id == participant.id)
@@ -152,7 +168,7 @@ async def regenerate_prepared(db, quiz_id, student_number, expected_round, probl
             if old is None:
                 raise HTTPException(409, "题目记录不完整，请刷新后重试")
             fields = {key: getattr(old, key) for key in ("state", "attempts", "result_json", "raw_response",
-                "model", "prompt_version", "error")}
+                "model", "prompt_version", "second_kind", "error")}
             # Completed audits still apply to unchanged text; never duplicate a paid in-flight audit.
             if old.quality_state in ("done", "failed", "not_requested"):
                 fields.update({key: getattr(old, key) for key in ("quality_state", "quality_result", "quality_raw",
@@ -169,6 +185,8 @@ async def retry_failed(db, quiz_id):
     quiz = (await db.execute(select(Quiz).where(Quiz.id == quiz_id).with_for_update())).scalar_one_or_none()
     if quiz is None:
         raise HTTPException(404, "测评不存在")
+    if quiz.published_at is not None:
+        raise HTTPException(409, "成绩已公布，不能重新生成")
     jobs = (await db.execute(select(GenerationJob).where(GenerationJob.quiz_id == quiz_id))).scalars().all()
     latest = {}
     for job in jobs:
@@ -212,8 +230,7 @@ async def claim(db, settings, model, *, now=None):
     job.lease_token = token
     job.lease_until = now + timedelta(seconds=settings.generation_lease_seconds)
     job.model = model
-    job.prompt_version = GENERATOR_VERSION
-    db.add(GenerationRun(id=token, job_id=job.id, model=model, prompt_version=GENERATOR_VERSION))
+    db.add(GenerationRun(id=token, job_id=job.id, model=model, prompt_version=job.prompt_version))
     identity = job.id, token, job.submission_snapshot_id
     await db.commit()
     return identity
@@ -245,7 +262,7 @@ async def finish(db, settings, identity, *, result=None, raw=None, error=None):
         job.state = "succeeded"
         job.result_json = result.model_dump(mode="json")
         job.raw_response = raw
-        if settings.quality_audit_enabled:
+        if settings.quality_audit_enabled and job.prompt_version != "lightweight_v1":
             job.quality_state = "queued"
     await db.commit()
     return True
@@ -266,16 +283,18 @@ async def heartbeat(factory, settings, identity):
 async def run_claim(factory, settings, provider, identity):
     async def generate():
         async with factory() as db:
-            valid = await db.scalar(select(GenerationJob.id).where(GenerationJob.id == identity[0],
+            job = await db.scalar(select(GenerationJob).where(GenerationJob.id == identity[0],
                 GenerationJob.lease_token == identity[1], GenerationJob.state == "running"))
-            if valid is None:
+            if job is None:
                 raise RuntimeError("Generation cancelled before request")
             snapshot = (await db.execute(select(SubmissionSnapshot).where(SubmissionSnapshot.id == identity[2])
                 .options(selectinload(SubmissionSnapshot.problem)))).scalar_one()
             payload = dict(title=snapshot.problem.title, statement=snapshot.problem.statement,
                 language=snapshot.language, source_code=snapshot.source_code,
-                second_question_kind=await allocated_kind(db, snapshot))
-        return await asyncio.wait_for(provider.generate_questions(**payload), settings.generation_task_timeout_seconds)
+                second_question_kind=job.second_kind if job.prompt_version == LIGHTWEIGHT_GENERATOR_VERSION else await allocated_kind(db, snapshot))
+            lightweight = job.prompt_version == LIGHTWEIGHT_GENERATOR_VERSION
+        call = provider.generate_lightweight if lightweight else provider.generate_questions
+        return await asyncio.wait_for(call(**payload), settings.generation_task_timeout_seconds)
 
     generation = asyncio.create_task(generate())
     renew = asyncio.create_task(heartbeat(factory, settings, identity))

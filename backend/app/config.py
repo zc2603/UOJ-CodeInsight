@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     llm_max_concurrency: int = Field(default=25, ge=1, le=200)
     grading_review_confidence_threshold: float = Field(default=0.85, ge=0, le=1)
 
-    quality_audit_enabled: bool = True
+    quality_audit_enabled: bool = False
+    lightweight_creation_enabled: bool = False
     quality_audit_timeout_seconds: float = Field(default=1200, gt=0)
     quality_audit_max_tokens: int = Field(default=100000, ge=1000)
 

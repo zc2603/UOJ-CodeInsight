@@ -628,3 +628,35 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .question-edit-dialog label { margin: 16px 0; }
 .question-edit-dialog textarea { min-height: 100px; }
 .question-edit-dialog .inline-actions { justify-content: flex-end; margin-top: 20px; }
+.lightweight-nav { display: flex; flex-wrap: wrap; gap: .5rem; padding: .7rem 1rem; background: var(--surface, #fff); border-bottom: 1px solid #e3e8ef; }
+.lightweight-nav button { min-width: 8rem; display: flex; flex-direction: column; text-align: left; gap: .15rem; background: #f4f7fb; color: #22334a; border: 1px solid #d9e2ed; border-radius: .6rem; padding: .5rem .75rem; cursor: pointer; }
+.lightweight-nav button.active { border-color: #2473cc; background: #e9f3ff; }
+.lightweight-nav small { font-size: .74rem; color: #536579; }
+.lightweight-choices { display: grid; gap: .55rem; border: 0; padding: 0; margin: 1rem 0; }
+.lightweight-choices label { display: flex; align-items: flex-start; gap: .65rem; border: 1px solid #dce4ee; border-radius: .65rem; padding: .75rem; cursor: pointer; }
+.lightweight-choices label.selected { border-color: #2473cc; background: #eff7ff; }
+.lightweight-choices input { margin-top: .28rem; }
+.lightweight-choices label .problem-statement { min-width: 0; }
+.lightweight-flags { display: grid; gap: .6rem; margin: 1rem 0; }
+.lightweight-flags label { display: flex; align-items: center; gap: .45rem; }
+.lightweight-flags textarea { width: 100%; min-height: 4rem; }
+.lightweight-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.lightweight-conflict { padding: .8rem; border: 1px solid #e9a23b; border-radius: .5rem; background: #fff9ed; }
+.lightweight-conflict button { margin-right: .5rem; }
+.result-page { align-items: flex-start; padding: 2rem 1rem; }
+.result-card { width: min(100%, 62rem); }
+.result-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.result-header div { display: flex; gap: .5rem; }
+.result-total { font-size: 1.2rem; }
+.result-questions { display: grid; gap: 1rem; margin-top: 1rem; }
+.result-question { border: 1px solid #dce4ee; border-radius: .7rem; padding: 1rem; }
+.result-question h2 { font-size: 1.05rem; margin-top: 0; }
+.result-options { padding-left: 1.4rem; }
+.appeal-form { display: grid; gap: .5rem; margin-top: .75rem; }
+.appeal-form textarea { width: 100%; min-height: 6rem; }
+@media (max-width: 760px) {
+  .lightweight-nav { overflow-x: auto; flex-wrap: nowrap; }
+  .lightweight-nav button { flex: 0 0 auto; }
+  .lightweight-quiz .form-footer { align-items: stretch; flex-direction: column; }
+  .result-header { align-items: flex-start; flex-direction: column; }
+}

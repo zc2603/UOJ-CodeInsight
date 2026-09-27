@@ -9,7 +9,13 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("quizzes", sa.Column("pre_generate", sa.Boolean(), nullable=False, server_default=sa.false()))
+    inspector = sa.inspect(op.get_bind())
+    if inspector.has_table("generation_jobs"):
+        # A fresh database may have been created by 0001's current metadata.
+        op.execute("INSERT INTO generation_control (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+        return
+    if "pre_generate" not in {column["name"] for column in inspector.get_columns("quizzes")}:
+        op.add_column("quizzes", sa.Column("pre_generate", sa.Boolean(), nullable=False, server_default=sa.false()))
     op.create_table("generation_control", sa.Column("id", sa.Integer(), primary_key=True))
     op.execute("INSERT INTO generation_control (id) VALUES (1)")
     op.create_table("generation_jobs",

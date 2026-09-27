@@ -61,6 +61,8 @@ async def submit_answer(
     now = datetime.now(timezone.utc)
     if attempt.status != AttemptStatus.IN_PROGRESS:
         raise HTTPException(status.HTTP_409_CONFLICT, "当前 Attempt 不能提交答案")
+    if attempt.assessment_version == "lightweight_v1":
+        raise HTTPException(409, "请刷新页面并使用整份交卷入口")
     if attempt.deadline_at is None or now >= ensure_utc(attempt.deadline_at):
         attempt.status = AttemptStatus.EXPIRED
         await db.commit()
@@ -77,6 +79,8 @@ async def submit_answer(
     attempt_id = attempt.id
     if is_last:
         attempt.status = AttemptStatus.GRADING
+        attempt.submitted_at = now
+        attempt.submission_source = "manual"
     await db.commit()
 
     if is_last:
@@ -91,6 +95,8 @@ async def save_draft(db, *, quiz_id, student_number, session_id, question_index,
     current = await get_current_attempt(db, quiz_id=quiz_id, student_number=student_number, session_id=session_id)
     attempt = await db.scalar(select(Attempt).where(Attempt.id == current.id).with_for_update()
         .execution_options(populate_existing=True).options(selectinload(Attempt.questions).selectinload(Question.answer)))
+    if attempt.assessment_version == "lightweight_v1":
+        raise HTTPException(409, "请刷新页面并使用逐题草稿入口")
     if attempt.status != AttemptStatus.IN_PROGRESS or attempt.deadline_at is None or datetime.now(timezone.utc) >= ensure_utc(attempt.deadline_at):
         raise HTTPException(410, "测评时间已结束，已保存答案将自动提交")
     unanswered = [q for q in attempt.questions if q.answer is None]

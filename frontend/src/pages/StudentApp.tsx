@@ -7,6 +7,8 @@ import md5 from "blueimp-md5";
 import { api } from "../api";
 import { ProblemStatement } from "../components/ProblemStatement";
 import { CodeBlock } from "../components/CodeBlock";
+import { LightweightStudent } from "./LightweightStudent";
+import { StudentResults } from "./StudentResults";
 import type { StudentQuestion } from "../types";
 
 interface Props { quizId: string }
@@ -40,7 +42,10 @@ export function StudentApp({ quizId }: Props) {
   const [showEnglish, setShowEnglish] = useState(false);
   const [preGenerated, setPreGenerated] = useState(false);
   const [quizName, setQuizName] = useState("");
-  const [screen, setScreen] = useState<"login" | "ready" | "quiz" | "done">("login");
+  const [screen, setScreen] = useState<"login" | "ready" | "quiz" | "done" | "results">("login");
+  const [assessmentVersion, setAssessmentVersion] = useState("legacy");
+  const [plannedCount, setPlannedCount] = useState<number | null>(null);
+  const [plannedMinutes, setPlannedMinutes] = useState<number | null>(null);
   const [question, setQuestion] = useState<StudentQuestion | null>(null);
   const [answer, setAnswer] = useState("");
   const [message, setMessage] = useState("");
@@ -124,7 +129,8 @@ export function StudentApp({ quizId }: Props) {
     setBusy(true);
     setMessage("");
     try {
-      const data = await api<{ quiz_name: string; pre_generated: boolean }>(`/api/quiz/${quizId}/login`, {
+      const data = await api<{ quiz_name: string; pre_generated: boolean; result_only: boolean;
+        assessment_version: string; question_count: number | null; duration_minutes: number | null }>(`/api/quiz/${quizId}/login`, {
         method: "POST",
         body: JSON.stringify({
           student_number: studentNumber,
@@ -133,7 +139,10 @@ export function StudentApp({ quizId }: Props) {
       });
       setQuizName(data.quiz_name);
       setPreGenerated(data.pre_generated);
-      setScreen("ready");
+      setAssessmentVersion(data.assessment_version);
+      setPlannedCount(data.question_count);
+      setPlannedMinutes(data.duration_minutes);
+      setScreen(data.result_only ? "results" : "ready");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -180,6 +189,20 @@ export function StudentApp({ quizId }: Props) {
     }
   }
 
+  async function logout() {
+    await api(`/api/quiz/${quizId}/logout`, { method: "POST" }).catch(() => undefined);
+    setQuestion(null);
+    setAnswer("");
+    setQuizCode("");
+    setScreen("login");
+  }
+
+  if (screen === "results") return <StudentResults quizId={quizId} onLogout={() => void logout()} />;
+
+  if (screen === "quiz" && question?.assessment_version === "lightweight_v1")
+    return <LightweightStudent quizId={quizId} initial={question}
+      onDone={timeout => { setTimedOut(timeout); setScreen("done"); }} />;
+
   if (screen === "login") return (
     <main className="center-page auth-page">
       <div className="auth-brand">
@@ -206,11 +229,13 @@ export function StudentApp({ quizId }: Props) {
     <main className="center-page ready-page">
       <section className="card ready-card">
         <div className="ready-header"><span className="brand-mark"><BookOpenCheck size={22} /></span><div><div className="app-kicker">{quizName}</div><h1>开始前请确认</h1></div></div>
-        <p className="ready-intro">本次测评包含你在本场 Contest 中的所有有效题目，每道题目有两个代码理解问题。</p>
+        <p className="ready-intro">{assessmentVersion === "lightweight_v1"
+          ? `本次测评有 ${plannedCount ?? "若干"} 个问题，整份作答时间 ${plannedMinutes ?? "按题量计算"} 分钟。可以随时切换问题，交卷后不能修改。`
+          : "本次测评包含你在本场 Contest 中的所有有效题目，每道题目有两个代码理解问题。"}</p>
         <div className="rule-grid">
           <article><span><LoaderCircle size={20} /></span><div><strong>{preGenerated ? "开始后计时" : "生成后计时"}</strong><p>{preGenerated ? "点击下方按钮开始测评，同时开始计时。" : "所有问题生成完成后才开始答题计时。"}</p></div></article>
-          <article><span><Clock3 size={20} /></span><div><strong>按问题计时</strong><p>每个问题 3 分钟，时间结束后自动交卷。</p></div></article>
-          <article><span><ListChecks size={20} /></span><div><strong>逐题提交</strong><p>提交后进入下一问，不能返回修改。</p></div></article>
+          <article><span><Clock3 size={20} /></span><div><strong>整份计时</strong><p>{assessmentVersion === "lightweight_v1" ? "时间可在各题之间自由分配，到时自动交卷。" : "每个问题 3 分钟，时间结束后自动交卷。"}</p></div></article>
+          <article><span><ListChecks size={20} /></span><div><strong>{assessmentVersion === "lightweight_v1" ? "统一交卷" : "逐题提交"}</strong><p>{assessmentVersion === "lightweight_v1" ? "可以跳过、回看和修改，最后统一交卷。" : "提交后进入下一问，不能返回修改。"}</p></div></article>
           <article><span><LockKeyhole size={20} /></span><div><strong>限定设备</strong><p>开始后仅允许当前设备继续作答。</p></div></article>
         </div>
         {message && <div className="error" role="alert">{message}</div>}
@@ -225,6 +250,8 @@ export function StudentApp({ quizId }: Props) {
       <div className="app-kicker">UOJ 代码理解测评</div>
       <h1>{timedOut ? "时间已到，已自动交卷" : "全部答案已提交"}</h1>
       <p>{timedOut ? "已保存的答案将正常评分，未作答部分计零分。可以关闭当前页面。" : "本次作答已经保存，可以关闭当前页面。"}</p>
+      <button type="button" onClick={() => setScreen("results")}>查看成绩状态</button>
+      <button type="button" onClick={() => void logout()}>退出登录</button>
     </section></main>
   );
 

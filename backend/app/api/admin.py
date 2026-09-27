@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,7 @@ from app.models import (
     GenerationControl,
     GenerationRun,
     Answer,
+    AnswerDraft, Appeal, ReviewIssue, ScoreAudit,
     LLMCallLog,
     QuizProblemSnapshot,
     AdminUser,
@@ -49,9 +51,17 @@ from app.services.grading_queue import enqueue_regrade
 from app.services.quiz_service import persist_quiz, preview_from_bundle, reset_attempt
 from app.time_utils import ensure_utc
 from app.services.generation_service import open_quiz, reopen_quiz, regenerate_prepared, retry_failed, summarize, stop_preparation
+from app.services.publication import publish as publish_scores, score_question, resolve_appeal, effective_attempt_score, effective_score
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.get("/features", dependencies=[Depends(require_admin)])
+async def admin_features():
+    settings = get_settings()
+    return {"lightweight_creation_enabled": settings.lightweight_creation_enabled,
+        "quality_audit_enabled": settings.quality_audit_enabled}
 
 
 def _effective_quiz_status(
@@ -195,10 +205,7 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
             if p.attempts
         ]
         finished = [a for a in attempts if a.status == AttemptStatus.FINISHED and not a.review_required]
-        scores = [
-            a.manual_override_score if a.manual_override_score is not None else a.auto_score
-            for a in finished
-        ]
+        scores = [effective_attempt_score(a) for a in finished]
         percentages = [
             score / (2 * len(attempt.questions)) * 100
             for attempt, score in zip(finished, scores, strict=True)
@@ -207,6 +214,8 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
         result.append(
             QuizSummary(
                 id=quiz.id,
+                assessment_version=quiz.assessment_version,
+                scores_published=quiz.published_at is not None,
                 name=quiz.name,
                 uoj_contest_id=quiz.uoj_contest_id,
                 start_time=quiz.start_time,
@@ -238,6 +247,11 @@ async def delete_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     jobs = select(GenerationJob.id).where(GenerationJob.quiz_id == quiz_id)
     # Explicit child-first deletion avoids PostgreSQL cascade-trigger ordering conflicts
     # between questions/attempts and their referenced submission snapshots.
+    answers = select(Answer.id).where(Answer.question_id.in_(questions))
+    await db.execute(delete(Appeal).where(Appeal.attempt_id.in_(attempts)))
+    await db.execute(delete(ScoreAudit).where(ScoreAudit.attempt_id.in_(attempts)))
+    await db.execute(delete(ReviewIssue).where(ReviewIssue.answer_id.in_(answers)))
+    await db.execute(delete(AnswerDraft).where(AnswerDraft.attempt_id.in_(attempts)))
     await db.execute(delete(Answer).where(Answer.question_id.in_(questions)))
     await db.execute(delete(LLMCallLog).where(LLMCallLog.attempt_id.in_(attempts)))
     await db.execute(delete(Question).where(Question.attempt_id.in_(attempts)))
@@ -312,9 +326,11 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
             )
         )
     ).scalars().all()
+    quiz = await db.get(Quiz, quiz_id)
     jobs = (await db.execute(select(GenerationJob).options(load_only(GenerationJob.id, GenerationJob.participant_id,
             GenerationJob.round_no, GenerationJob.state, GenerationJob.quality_state, GenerationJob.quality_result,
-            GenerationJob.quality_acknowledged, GenerationJob.quality_error, GenerationJob.quality_model, GenerationJob.quality_version))
+            GenerationJob.quality_acknowledged, GenerationJob.quality_error, GenerationJob.quality_model, GenerationJob.quality_version,
+            GenerationJob.result_json))
         .where(GenerationJob.quiz_id == quiz_id))).scalars().all()
     latest_round = {}
     for job in jobs:
@@ -332,14 +348,14 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
         confidences = [q.answer.confidence for q in questions if q.answer and q.answer.confidence is not None]
         auto = attempt.auto_score if attempt else None
         manual = attempt.manual_override_score if attempt else None
-        final = manual if manual is not None else auto
+        final = effective_attempt_score(attempt) if attempt else None
         if attempt and attempt.review_required:
             final = None
         max_score = len(questions) * 2
         problem_count = len({q.submission_snapshot_id for q in questions})
         rows.append(
             ResultRow(
-                quality_attention=any(quality_presentation(j, i)["attention"]
+                quality_attention=get_settings().quality_audit_enabled and any(quality_presentation(j, i)["attention"]
                     for j in jobs if j.participant_id == participant.id and j.round_no == (
                         attempt.attempt_no if attempt and attempt.status != AttemptStatus.RESET else latest_round.get(participant.id))
                     for i in (1, 2)),
@@ -352,7 +368,9 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
                 prepared_problem_count=prepared_counts.get(participant.id, 0),
                 preparation_total=preparation_totals.get(participant.id, 0),
                 problem_count=problem_count if attempt else preparation_totals.get(participant.id, 0),
-                question_count=len(questions) if attempt else prepared_counts.get(participant.id, 0) * 2,
+                question_count=len(questions) if attempt else sum(len(j.result_json.get("questions", []))
+                    for j in jobs if j.participant_id == participant.id
+                    and j.round_no == latest_round.get(participant.id) and j.state == "succeeded" and j.result_json),
                 auto_score=auto,
                 manual_score=manual,
                 final_score=final,
@@ -392,15 +410,19 @@ async def prepared_questions(quiz_id: uuid.UUID, student_number: str, db: AsyncS
     for job, snapshot in jobs:
         if job.state != "succeeded":
             continue
-        generated = QuestionGenerationResult.model_validate(job.result_json)
+        from app.schemas.llm import LightweightGenerationResult
+        generated = (LightweightGenerationResult if job.prompt_version == "question_generator_lightweight_v1"
+            else QuestionGenerationResult).model_validate(job.result_json)
         for item in generated.questions:
-            questions.append(dict(job_id=str(job.id), local_index=item.index, revision=prepared_revision(job.result_json), quality=quality_presentation(job, item.index), index=len(questions) + 1, type=item.type, question=item.question,
-                question_en=item.question_en, reference_answer=item.reference_answer, grading_points=item.grading_points,
+            questions.append(dict(job_id=str(job.id), local_index=item.index, revision=prepared_revision(job.result_json), quality=quality_presentation(job, item.index) if get_settings().quality_audit_enabled else None, index=len(questions) + 1, type=item.type, question=item.question,
+                question_en=item.question_en, reference_answer=item.reference_answer, grading_points=getattr(item, "grading_points", []),
+                response_format=getattr(item, "response_format", "short_answer"), choices=[c.model_dump() for c in item.choices] if getattr(item, "choices", None) else None,
+                correct_choice_id=getattr(item, "correct_choice_id", None), core_idea=getattr(item, "core_idea", None),
                 problem=dict(id=snapshot.uoj_problem_id, title=snapshot.problem.title, statement=snapshot.problem.statement),
                 source_code=snapshot.source_code, language=snapshot.language,
                 student_answer=None, score=None, reason=None, confidence=None))
     latest = await db.scalar(select(Attempt).where(Attempt.participant_id == participant.id).order_by(Attempt.attempt_no.desc()).limit(1))
-    return dict(can_edit=latest is None or latest.status == AttemptStatus.RESET, student_number=student_number, round_no=round_no, prepared_problem_count=len(questions) // 2,
+    return dict(can_edit=latest is None or latest.status == AttemptStatus.RESET, student_number=student_number, round_no=round_no, prepared_problem_count=sum(job.state == "succeeded" for job, _ in jobs),
         preparation_total=len(jobs), questions=questions)
 
 
@@ -437,13 +459,9 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
     for question in questions:
         local_indices[question.submission_snapshot_id] = local_indices.get(question.submission_snapshot_id, 0) + 1
         quality_by_question[question.id] = quality_presentation(quality_by_snapshot.get(question.submission_snapshot_id),
-            local_indices[question.submission_snapshot_id])
+            local_indices[question.submission_snapshot_id]) if get_settings().quality_audit_enabled else None
     max_score = len(questions) * 2
-    final_score = (
-        attempt.manual_override_score
-        if attempt.manual_override_score is not None
-        else attempt.auto_score
-    )
+    final_score = effective_attempt_score(attempt)
     # Submission time is independent of model latency and later regrading.
     completed_at = None
     if attempt.timed_out or attempt.status == AttemptStatus.EXPIRED:
@@ -451,7 +469,9 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
     elif questions and all(q.answer is not None for q in questions):
         completed_at = max(ensure_utc(q.answer.submitted_at) for q in questions)
     return {
-        "completed_at": completed_at,
+        "completed_at": attempt.submitted_at if attempt.assessment_version == "lightweight_v1" else completed_at,
+        "assessment_version": attempt.assessment_version,
+        "score_version": attempt.score_version,
         "timed_out": attempt.timed_out or attempt.status == AttemptStatus.EXPIRED,
         "id": str(attempt.id),
         "status": attempt.status,
@@ -464,6 +484,7 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
         "manual_override_reason": attempt.manual_override_reason,
         "questions": [
             {
+                "id": str(item.id),
                 "quality": quality_by_question[item.id],
                 "index": item.question_index,
                 "type": item.question_type,
@@ -478,8 +499,18 @@ async def attempt_detail(attempt_id: uuid.UUID, db: AsyncSession = Depends(get_d
                 "language": item.submission_snapshot.language,
                 "reference_answer": item.reference_answer,
                 "grading_points": item.grading_points_json,
+                "response_format": item.response_format,
+                "choices": item.choices_json,
+                "correct_choice_id": item.correct_choice_id,
+                "core_idea": item.core_idea,
                 "student_answer": item.answer.student_answer if item.answer else None,
+                "choice_id": item.answer.choice_id if item.answer else None,
                 "score": item.answer.auto_score if item.answer else None,
+                "effective_score": effective_score(item.answer) if item.answer else None,
+                "manual_score": item.answer.manual_score if item.answer else None,
+                "manual_reason": item.answer.manual_reason if item.answer else None,
+                "student_dispute": item.answer.student_dispute if item.answer else False,
+                "dispute_reason": item.answer.dispute_reason if item.answer else None,
                 "reason": item.answer.grading_reason if item.answer else None,
                 "confidence": item.answer.confidence if item.answer else None,
                 "review_required": item.answer.review_required if item.answer else False,
@@ -519,6 +550,9 @@ async def override_score(
     ).scalar_one_or_none()
     if attempt is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Attempt 不存在")
+    quiz = await db.get(Quiz, attempt.quiz_id)
+    if quiz.assessment_version == "lightweight_v1" or quiz.published_at is not None:
+        raise HTTPException(409, "请使用逐题人工复核入口")
     question_count = (
         await db.execute(select(Question).where(Question.attempt_id == attempt_id))
     ).scalars().all()
@@ -596,6 +630,8 @@ async def request_quality(job_id: uuid.UUID, db: AsyncSession = Depends(get_db))
         raise HTTPException(409, "质量审核未启用")
     if job is None:
         raise HTTPException(404, "题目不存在")
+    if job.prompt_version == "lightweight_v1":
+        raise HTTPException(409, "新协议不使用独立质量审核")
     if job.state != "succeeded" or job.quality_state not in ("not_requested", "failed", "done"):
         raise HTTPException(409, "当前题目不能申请审核")
     job.quality_state = "queued"
@@ -618,3 +654,53 @@ async def quality_detail(job_id: uuid.UUID, question_index: int, db: AsyncSessio
 async def update_prepared_question(quiz_id: uuid.UUID, student_number: str, job_id: uuid.UUID, index: int,
     payload: EditPreparedRequest, db: AsyncSession = Depends(get_db)):
     return await edit_prepared(db, quiz_id, student_number, job_id, index, payload)
+
+
+class PublishScoresRequest(BaseModel):
+    include_answers: bool = False
+
+
+@router.post("/quizzes/{quiz_id}/publish-scores")
+async def publish_quiz_scores(quiz_id: uuid.UUID, payload: PublishScoresRequest,
+    principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    return await publish_scores(db, quiz_id, principal.username, include_answers=payload.include_answers)
+
+
+class QuestionScoreRequest(BaseModel):
+    score: int = Field(ge=0, le=2)
+    reason: str = Field(min_length=1, max_length=5000)
+    expected_version: int = Field(ge=0)
+    clear_override: bool = False
+
+
+@router.patch("/attempts/{attempt_id}/questions/{question_id}/score")
+async def update_question_score(attempt_id: uuid.UUID, question_id: uuid.UUID, payload: QuestionScoreRequest,
+    principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    return await score_question(db, attempt_id, question_id, score=payload.score,
+        reason=payload.reason, actor=principal.username, expected_version=payload.expected_version,
+        clear_override=payload.clear_override)
+
+
+@router.get("/quizzes/{quiz_id}/appeals")
+async def quiz_appeals(quiz_id: uuid.UUID, principal: AdminPrincipal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)):
+    appeals = (await db.scalars(select(Appeal).join(Attempt, Attempt.id == Appeal.attempt_id)
+        .where(Attempt.quiz_id == quiz_id).order_by(Appeal.created_at.desc()))).all()
+    return [dict(id=str(a.id), attempt_id=str(a.attempt_id), question_id=str(a.question_id),
+        state=a.state, reason=a.reason, score_snapshot=a.score_snapshot,
+        feedback_snapshot=a.feedback_snapshot, answer_snapshot=a.answer_snapshot,
+        question_snapshot=a.question_snapshot, resolution=a.resolution,
+        created_at=a.created_at) for a in appeals]
+
+
+class ResolveAppealRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+    resolution: str = Field(min_length=1, max_length=5000)
+    score: int | None = Field(default=None, ge=0, le=2)
+
+
+@router.post("/appeals/{appeal_id}/resolve")
+async def resolve_quiz_appeal(appeal_id: uuid.UUID, payload: ResolveAppealRequest,
+    principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    return await resolve_appeal(db, appeal_id, actor=principal.username,
+        resolution=payload.resolution, expected_version=payload.expected_version, score=payload.score)

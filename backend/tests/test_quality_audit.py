@@ -12,10 +12,20 @@ from app.services import generation_service as generation
 from app.services.quiz_service import start_attempt
 from app.services.generation_service import regenerate_prepared
 from app.config import Settings
+from app.config import get_settings
 from app.main import app
 from app.database import get_db
 from app.security import create_token
 from app.services.llm_provider import MockLLMProvider, OpenAICompatibleLLMProvider
+
+
+@pytest.fixture(autouse=True)
+def explicit_legacy_audit_setting(monkeypatch):
+    # These exercise the retained audit module with its switch deliberately enabled.
+    monkeypatch.setenv("QUALITY_AUDIT_ENABLED", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def outcome(verdict="pass", confidence=.99):

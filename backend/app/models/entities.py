@@ -85,6 +85,11 @@ class Quiz(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, default=8)
     minutes_per_question: Mapped[int] = mapped_column(Integer, default=3)
     question_mode: Mapped[str] = mapped_column(String(30), default="all_positive_2")
+    assessment_version: Mapped[str] = mapped_column(String(30), default="legacy", server_default="legacy")
+    time_mode: Mapped[str] = mapped_column(String(20), default="per_question", server_default="per_question")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_by: Mapped[str | None] = mapped_column(String(80))
+    publish_answers: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     submission_cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[QuizStatus] = mapped_column(enum_column(QuizStatus), default=QuizStatus.PUBLISHED)
     pre_generate: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -108,6 +113,8 @@ class QuizProblemSnapshot(Base):
     uoj_problem_id: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(Text)
     statement: Mapped[str] = mapped_column(Text)
+    display_order: Mapped[int | None] = mapped_column(Integer)
+    include_choice: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
     quiz: Mapped[Quiz] = relationship(back_populates="problems")
 
@@ -167,6 +174,11 @@ class Attempt(Base):
     draft_text: Mapped[str | None] = mapped_column(Text)
     draft_question_index: Mapped[int | None] = mapped_column(Integer)
     draft_revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    assessment_version: Mapped[str] = mapped_column(String(30), default="legacy", server_default="legacy")
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submission_source: Mapped[str | None] = mapped_column(String(20))
+    submit_key: Mapped[str | None] = mapped_column(String(64))
+    score_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     grading_token: Mapped[str | None] = mapped_column(String(36))
     grading_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __tablename__ = "attempts"
@@ -217,6 +229,10 @@ class Question(Base):
     question_text_en: Mapped[str] = mapped_column(Text, nullable=False)
     reference_answer: Mapped[str] = mapped_column(Text)
     grading_points_json: Mapped[list[str]] = mapped_column(JSON)
+    response_format: Mapped[str] = mapped_column(String(20), default="short_answer", server_default="short_answer")
+    choices_json: Mapped[list[dict] | None] = mapped_column(JSON)
+    correct_choice_id: Mapped[str | None] = mapped_column(String(1))
+    core_idea: Mapped[str | None] = mapped_column(Text)
     generator_model: Mapped[str] = mapped_column(String(100))
     generator_prompt_version: Mapped[str] = mapped_column(String(50))
     generator_raw_response: Mapped[str] = mapped_column(Text)
@@ -237,6 +253,14 @@ class Answer(Base):
         ForeignKey("questions.id", ondelete="CASCADE"), unique=True, index=True
     )
     student_answer: Mapped[str] = mapped_column(Text)
+    choice_id: Mapped[str | None] = mapped_column(String(1))
+    student_dispute: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    dispute_reason: Mapped[str | None] = mapped_column(Text)
+    manual_score: Mapped[int | None] = mapped_column(Integer)
+    manual_reason: Mapped[str | None] = mapped_column(Text)
+    manual_by: Mapped[str | None] = mapped_column(String(80))
+    manual_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    score_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     auto_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     grading_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -249,6 +273,71 @@ class Answer(Base):
     question_validity: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     question: Mapped[Question] = relationship(back_populates="answer")
+
+
+class AnswerDraft(Base):
+    __tablename__ = "answer_drafts"
+    __table_args__ = (UniqueConstraint("attempt_id", "question_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("attempts.id", ondelete="CASCADE"), index=True)
+    question_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"), index=True)
+    answer_text: Mapped[str] = mapped_column(Text, default="")
+    choice_id: Mapped[str | None] = mapped_column(String(1))
+    revisit: Mapped[bool] = mapped_column(Boolean, default=False)
+    dispute: Mapped[bool] = mapped_column(Boolean, default=False)
+    dispute_reason: Mapped[str | None] = mapped_column(Text)
+    revision: Mapped[int] = mapped_column(BigInteger, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ReviewIssue(Base):
+    __tablename__ = "review_issues"
+    __table_args__ = (UniqueConstraint("answer_id", "source"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    answer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("answers.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(30))
+    reason: Mapped[str] = mapped_column(Text)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_by: Mapped[str | None] = mapped_column(String(80))
+    resolution: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ScoreAudit(Base):
+    __tablename__ = "score_audits"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("attempts.id", ondelete="CASCADE"), index=True)
+    question_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"), index=True)
+    old_score: Mapped[int | None] = mapped_column(Integer)
+    new_score: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(80))
+    score_version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class Appeal(Base):
+    __tablename__ = "appeals"
+    __table_args__ = (UniqueConstraint("question_id", "question_score_version"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("attempts.id", ondelete="CASCADE"), index=True)
+    question_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"), index=True)
+    question_score_version: Mapped[int] = mapped_column(Integer)
+    request_key: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(Text)
+    score_snapshot: Mapped[int] = mapped_column(Integer)
+    feedback_snapshot: Mapped[str] = mapped_column(Text)
+    answer_snapshot: Mapped[str] = mapped_column(Text)
+    question_snapshot: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(20), default="pending")
+    resolution: Mapped[str | None] = mapped_column(Text)
+    resolved_by: Mapped[str | None] = mapped_column(String(80))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class LLMCallLog(Base):
@@ -304,6 +393,7 @@ class GenerationJob(Base):
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     prompt_version: Mapped[str] = mapped_column(String(50), default="question_generator_v10")
+    second_kind: Mapped[str | None] = mapped_column(String(20))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

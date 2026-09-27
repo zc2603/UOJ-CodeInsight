@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing import Literal
 
 from app.models import AttemptStatus, QuestionType, QuizParticipantStatus, QuizStatus
 
@@ -22,6 +23,8 @@ class QuizPreviewRequest(BaseModel):
 class PreviewProblem(BaseModel):
     problem_id: int
     title: str
+    display_order: int | None = None
+    include_choice: bool = True
 
 
 class ImportIssue(BaseModel):
@@ -65,6 +68,16 @@ class QuizCreateRequest(BaseModel):
     submission_cutoff: datetime | None = None
     show_score_after_finish: bool = True
     allow_before_cutoff: bool = False
+    assessment_version: Literal["legacy", "lightweight_v1"] | None = None
+    choice_problem_ids: list[int] | None = None
+    time_mode: Literal["per_question", "fixed"] = "per_question"
+    minutes_per_question: Literal[4, 5] = 5
+
+    @model_validator(mode="after")
+    def validate_time(self):
+        if self.time_mode == "fixed" and self.duration_minutes is None:
+            raise ValueError("fixed duration requires duration_minutes")
+        return self
 
 
 class QuizCreatedResponse(BaseModel):
@@ -98,6 +111,8 @@ class QuizSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    assessment_version: str = "legacy"
+    scores_published: bool = False
     name: str
     uoj_contest_id: int
     start_time: datetime
@@ -126,6 +141,9 @@ class StudentLoginRequest(BaseModel):
 
 
 class StudentQuestionResponse(BaseModel):
+    assessment_version: str = "legacy"
+    questions: list[dict] = Field(default_factory=list)
+    duration_minutes: int | None = None
     timed_out: bool = False
     draft_answer: str = ""
     draft_revision: int = 0
@@ -150,6 +168,22 @@ class DraftSaveRequest(BaseModel):
     question_index: int = Field(ge=1, le=200)
     answer: str = Field(max_length=5000)
     revision: int = Field(ge=1, le=9007199254740991)
+
+
+class LightweightDraftRequest(BaseModel):
+    question_id: uuid.UUID
+    expected_revision: int = Field(ge=0)
+    answer_text: str = Field(default="", max_length=5000)
+    choice_id: Literal["A", "B", "C", "D"] | None = None
+    revisit: bool = False
+    dispute: bool = False
+    dispute_reason: str | None = Field(default=None, max_length=1000)
+
+
+class LightweightSubmitRequest(BaseModel):
+    attempt_id: uuid.UUID
+    idempotency_key: str = Field(min_length=8, max_length=64)
+    drafts: list[LightweightDraftRequest]
 
 
 class AnswerSubmitRequest(BaseModel):

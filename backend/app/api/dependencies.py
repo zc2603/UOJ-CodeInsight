@@ -44,3 +44,17 @@ def require_student(student_session: str | None = Cookie(default=None)) -> Stude
         )
     except (jwt.PyJWTError, KeyError, ValueError) as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session 无效或已过期") from exc
+
+
+def require_student_result(student_session: str | None = Cookie(default=None)) -> StudentPrincipal:
+    if not student_session:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "未登录")
+    try:
+        try:
+            payload = decode_token(student_session, "student_result")
+        except jwt.PyJWTError:
+            payload = decode_token(student_session, "student")
+        return StudentPrincipal(quiz_id=uuid.UUID(payload["quiz_id"]),
+            student_number=payload["sub"], session_id=payload.get("sid", ""))
+    except (jwt.PyJWTError, KeyError, ValueError) as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session 无效或已过期") from exc

@@ -23,7 +23,7 @@ interface ContestPreview {
   contest_name: string;
   submission_cutoff: string;
   cutoff_reached: boolean;
-  problems: { problem_id: number; title: string }[];
+  problems: { problem_id: number; title: string; display_order?: number; include_choice?: boolean }[];
   numeric_student_accounts: number;
   students_with_eligible_problem: number;
   selected_submission_snapshots: number;
@@ -110,10 +110,26 @@ export function AdminApp() {
   const [rosterName, setRosterName] = useState("");
   const [rosterError, setRosterError] = useState("");
   const [preview, setPreview] = useState<ContestPreview | null>(null);
+  const [lightweightEnabled, setLightweightEnabled] = useState(false);
+  const [qualityAuditEnabled, setQualityAuditEnabled] = useState(false);
+  const [choiceIds, setChoiceIds] = useState<number[]>([]);
+  const [timeMode, setTimeMode] = useState<"per_question" | "fixed">("per_question");
+  const [perQuestionMinutes, setPerQuestionMinutes] = useState<4 | 5>(5);
+  const [fixedMinutes, setFixedMinutes] = useState(25);
   const [createdCode, setCreatedCode] = useState("");
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [resultQuery, setResultQuery] = useState("");
   const [resultFilter, setResultFilter] = useState<"all" | "finished" | "active" | "attention" | "pending">("all");
+  const [includeAnswers, setIncludeAnswers] = useState(false);
+  const [appeals, setAppeals] = useState<{ id: string; attempt_id: string; question_id: string;
+    state: string; reason: string; score_snapshot: number; question_snapshot: string;
+    answer_snapshot: string; resolution: string | null }[]>([]);
+  const [resolvingAppeal, setResolvingAppeal] = useState<string | null>(null);
+  const [appealResolution, setAppealResolution] = useState("");
+  const [appealScore, setAppealScore] = useState<string>("");
+  const [editingScoreQuestion, setEditingScoreQuestion] = useState<string | null>(null);
+  const [questionScore, setQuestionScore] = useState(0);
+  const [questionScoreReason, setQuestionScoreReason] = useState("");
 
   const attemptGroups = attempt ? groupAttemptQuestions(attempt.questions) : [];
   const [studentCount, setStudentCount] = useState<number | null>(null);
@@ -160,6 +176,9 @@ export function AdminApp() {
       setQuizzes(data);
       setStudentCount(overview.student_count);
       setLoggedIn(true);
+      void api<{ lightweight_creation_enabled: boolean; quality_audit_enabled: boolean }>("/api/admin/features")
+        .then(features => { setLightweightEnabled(features.lightweight_creation_enabled);
+          setQualityAuditEnabled(features.quality_audit_enabled); }).catch(() => undefined);
     } catch {
       setLoggedIn(false);
     }
@@ -250,9 +269,11 @@ export function AdminApp() {
     setMessage("");
     setCreatedCode("");
     try {
-      setPreview(await api<ContestPreview>("/api/admin/quizzes/preview-contest", {
+      const data = await api<ContestPreview>("/api/admin/quizzes/preview-contest", {
         method: "POST", body: JSON.stringify({ contest_id: Number(contestId), roster_text: rosterText }),
-      }));
+      });
+      setPreview(data);
+      setChoiceIds(data.problems.filter(p => p.include_choice).map(p => p.problem_id));
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -276,6 +297,7 @@ export function AdminApp() {
         method: "POST", body: JSON.stringify({ contest_id: Number(contestId), roster_text: text }),
       });
       setPreview(updated);
+      setChoiceIds(updated.problems.filter(p => p.include_choice).map(p => p.problem_id));
       setRosterText(text);
       setRosterName(file?.name ?? "");
     } catch (error) { setRosterError((error as Error).message); }
@@ -290,6 +312,9 @@ export function AdminApp() {
         method: "POST",
         body: JSON.stringify({
           contest_id: Number(contestId), roster_text: rosterText, show_score_after_finish: false, allow_before_cutoff: allowBeforeCutoff,
+          ...(lightweightEnabled ? { assessment_version: "lightweight_v1", choice_problem_ids: choiceIds,
+            time_mode: timeMode, minutes_per_question: perQuestionMinutes,
+            duration_minutes: timeMode === "fixed" ? fixedMinutes : undefined } : {}),
         }),
       });
       setCreatedCode(data.quiz_code);
@@ -384,12 +409,68 @@ export function AdminApp() {
     setSelected(quiz);
     try {
       setResults(await api(`/api/admin/quizzes/${quiz.id}/results`));
+      setAppeals(await api(`/api/admin/quizzes/${quiz.id}/appeals`));
       setView("results");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  function publishGrades() {
+    if (!selected) return;
+    const quiz = selected;
+    setConfirm({ title: quiz.scores_published ? "公开参考答案与正确选项？" : "公布本场成绩？",
+      description: `涉及 ${results.length} 名学生。默认公布逐问得分、本人答案和评分理由。
+        ${includeAnswers ? "本次还会公布参考答案和正确选项；开启后不能关闭。" : "参考答案与正确选项暂不公布。"}
+        公布后不得重新开放、Reset 或自动重评。`,
+      confirmLabel: "确认公布", action: async () => {
+        setBusy(true);
+        try {
+          await api(`/api/admin/quizzes/${quiz.id}/publish-scores`, {
+            method: "POST", body: JSON.stringify({ include_answers: includeAnswers }),
+          });
+          setToast("成绩已公布");
+          await loadQuizzes();
+          await showResults({ ...quiz, scores_published: true });
+        } catch (error) { setMessage((error as Error).message); }
+        finally { setBusy(false); }
+      } });
+  }
+
+  async function saveQuestionScore(questionId: string) {
+    if (!attempt) return;
+    setBusy(true);
+    try {
+      await api(`/api/admin/attempts/${attempt.id}/questions/${questionId}/score`, {
+        method: "PATCH", body: JSON.stringify({ score: questionScore, reason: questionScoreReason,
+          expected_version: attempt.score_version ?? 0, clear_override: false }),
+      });
+      setEditingScoreQuestion(null);
+      await loadAttempt(attempt.id);
+      setToast("逐题复核已保存");
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function resolveSelectedAppeal() {
+    const appeal = appeals.find(a => a.id === resolvingAppeal);
+    if (!appeal || !selected) return;
+    setBusy(true);
+    try {
+      const detail = await api<AttemptDetail>(`/api/admin/attempts/${appeal.attempt_id}`);
+      await api(`/api/admin/appeals/${appeal.id}/resolve`, {
+        method: "POST", body: JSON.stringify({ expected_version: detail.score_version ?? 0,
+          resolution: appealResolution, score: appealScore === "" ? null : Number(appealScore) }),
+      });
+      setResolvingAppeal(null);
+      setAppealResolution("");
+      setAppealScore("");
+      await showResults(selected);
+      setToast("申诉已处理");
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
   }
 
   async function loadPrepared(studentNumber: string) {
@@ -409,13 +490,27 @@ export function AdminApp() {
     event.preventDefault();
     if (!selected || !preparedDetail || !editingQuestion) return;
     if (![editingQuestion.question, editingQuestion.question_en, editingQuestion.reference_answer].every(v => v?.trim())) { setEditError("请填写题干、英文对照和参考答案"); return; }
-    if (editingQuestion.grading_points.length > 3 || editingQuestion.grading_points.some(v => !v.trim() || v.length > 5000)) { setEditError("请填写 1–3 条非空评分点，每条不超过 5000 字"); return; }
+    if (selected.assessment_version !== "lightweight_v1" &&
+      (editingQuestion.grading_points.length > 3 || editingQuestion.grading_points.some(v => !v.trim() || v.length > 5000))) {
+      setEditError("请填写 1–3 条非空评分点，每条不超过 5000 字"); return;
+    }
+    if (selected.assessment_version === "lightweight_v1" &&
+      (editingQuestion.response_format === "short_answer" ? !editingQuestion.core_idea?.trim() :
+        editingQuestion.choices?.length !== 4 || !editingQuestion.correct_choice_id ||
+        editingQuestion.choices.some(c => !c.text.trim() || !c.text_en.trim()))) {
+      setEditError("请填写核心理解目标，或完整的四组选项与唯一正确选项"); return;
+    }
     setBusy(true); setEditError("");
     try {
       await api(`/api/admin/quizzes/${selected.id}/students/${encodeURIComponent(preparedDetail.student_number)}/prepared-questions/${editingQuestion.job_id}/${editingQuestion.local_index}`, {
         method: "PATCH", body: JSON.stringify({expected_revision: editingQuestion.revision,
           question: editingQuestion.question, question_en: editingQuestion.question_en,
-          reference_answer: editingQuestion.reference_answer, grading_points: editingQuestion.grading_points}),
+          reference_answer: editingQuestion.reference_answer,
+          ...(selected.assessment_version === "lightweight_v1" ?
+            editingQuestion.response_format === "short_answer"
+              ? { core_idea: editingQuestion.core_idea }
+              : { choices: editingQuestion.choices, correct_choice_id: editingQuestion.correct_choice_id }
+            : { grading_points: editingQuestion.grading_points })}),
       });
       await loadPrepared(preparedDetail.student_number);
       setToast("题目已保存");
@@ -428,8 +523,8 @@ export function AdminApp() {
     const quiz = selected;
     const detail = preparedDetail;
     setConfirm({
-      title: problemId ? `重新生成题目 ${problemId} 的两个问题？` : "重新生成这名学生的题目？",
-      description: problemId ? `将重新生成 ${detail.student_number} 的题目 ${problemId} 的问题 1 和问题 2，产生出题及已启用审核的模型调用费用。其他原题的问题保留。新题完成前，该学生暂不能开始测评。` : `将为 ${detail.student_number} 的 ${detail.preparation_total} 道有效题目重新出题，产生模型调用费用。新题全部完成前，该学生暂不能开始测评。其他学生不受影响。`,
+      title: problemId ? `重新生成题目 ${problemId} 的问题？` : "重新生成这名学生的题目？",
+      description: problemId ? `将按冻结配置重新生成 ${detail.student_number} 的题目 ${problemId}，产生模型调用费用。其他原题的问题保留。新题完成前，该学生暂不能开始测评。` : `将为 ${detail.student_number} 的 ${detail.preparation_total} 道有效题目重新出题，产生模型调用费用。新题全部完成前，该学生暂不能开始测评。其他学生不受影响。`,
       confirmLabel: "确认重新生成",
       action: async () => {
         setBusy(true);
@@ -649,6 +744,33 @@ export function AdminApp() {
                   {!preview.cutoff_reached && <div className="warning"><CircleAlert size={17} /><div><strong>Contest 尚未结束</strong><span>提前创建将采用学生当前的提交。如需包含后续提交，请在比赛结束后创建。</span></div></div>}
                   <div className="stats"><div><strong>{preview.problems.length}</strong><span>比赛题目</span></div><div><strong>{preview.numeric_student_accounts}</strong><span>学生人数</span></div><div><strong>{preview.students_with_eligible_problem}</strong><span>可参与人数</span></div><div><strong>{preview.parser_errors.length}</strong><span>导入异常</span></div></div>
                   <div className="problem-chip-list">{preview.problems.map(problem => <span key={problem.problem_id}><b>#{problem.problem_id}</b>{problem.title}</span>)}</div>
+                  {lightweightEnabled && <section className="assessment-setup">
+                    <h3>测评内容</h3>
+                    <p className="muted">按 problem_id 升序排列；三题比赛中最大 ID 默认仅简答。每道原题都参与抽查。</p>
+                    {preview.problems.map(problem => <label key={problem.problem_id} className="assessment-problem">
+                      <span>第 {problem.display_order} 题 · {problem.title}</span>
+                      <select value={choiceIds.includes(problem.problem_id) ? "two" : "one"}
+                        onChange={event => setChoiceIds(old => event.target.value === "two"
+                          ? [...old.filter(id => id !== problem.problem_id), problem.problem_id]
+                          : old.filter(id => id !== problem.problem_id))}>
+                        <option value="two">简答 + 单选</option><option value="one">仅简答</option>
+                      </select>
+                    </label>)}
+                    <h3>个人作答时长</h3>
+                    <p className="muted">时间可在各题之间自由分配。</p>
+                    <label><input type="radio" checked={timeMode === "per_question"} onChange={() => setTimeMode("per_question")} />
+                      按题量计算 · 每问
+                      <select value={perQuestionMinutes} onChange={event => setPerQuestionMinutes(Number(event.target.value) as 4 | 5)}>
+                        <option value={5}>5 分钟</option><option value={4}>4 分钟</option>
+                      </select></label>
+                    <label><input type="radio" checked={timeMode === "fixed"} onChange={() => setTimeMode("fixed")} />
+                      固定总时长 <input type="number" min={1} max={180} value={fixedMinutes}
+                        onChange={event => setFixedMinutes(Number(event.target.value))} /> 分钟</label>
+                    <p>全部原题都有有效提交时：{preview.problems.length + choiceIds.length} 个问题 ·
+                      {timeMode === "fixed" ? fixedMinutes : (preview.problems.length + choiceIds.length) * perQuestionMinutes} 分钟。
+                      学生缺少有效提交时，实际题数可能更少。</p>
+                  </section>}
+                  {!lightweightEnabled && <p className="muted">新版自由作答协议仍在质量回归前关闭创建入口；当前创建沿用历史测评规则。</p>}
                   {preview.parser_errors.length > 0 && <details className="parser-errors"><summary>查看 {preview.parser_errors.length} 条导入异常</summary><ul>{preview.parser_errors.map((error, index) => <li key={`${error.student_number}-${error.problem_id}-${index}`}>{error.student_number} · 题目 {error.problem_id}：{error.error}</li>)}</ul></details>}
                   <section className="roster-panel" aria-label="参与范围">
                     <div className="roster-heading"><div><h3><Users size={18} />参与范围 <span>可选</span></h3><p>{rosterText === null ? "全部可参与学生" : "按名单抽查"}</p></div>
@@ -668,7 +790,7 @@ export function AdminApp() {
                       })}
                     </div>}
                   </section>
-                  <div className="policy-box"><div><Check size={16} /><span>创建后开始出题</span></div><div><Check size={16} /><span>教师开放后 30 分钟内进入</span></div><div><Check size={16} /><span>每道有效题目固定 2 问</span></div><div><Check size={16} /><span>每个问题 3 分钟</span></div></div>
+                  <div className="policy-box"><div><Check size={16} /><span>创建后开始出题</span></div><div><Check size={16} /><span>教师开放后 30 分钟内进入</span></div><div><Check size={16} /><span>{lightweightEnabled ? "按原题冻结一问或两问" : "每道有效题目固定 2 问"}</span></div><div><Check size={16} /><span>{lightweightEnabled ? "整份自由分配时间" : "每个问题 3 分钟"}</span></div></div>
                   <p className="muted">将为 {preview.roster?.matched_students.length ?? preview.students_with_eligible_problem} 名学生的 {preview.roster?.selected_submission_snapshots ?? preview.selected_submission_snapshots} 道有效题目准备问题，产生相应的模型调用费用。出题完成后，由你决定何时开放。</p>
                   <button className="create-submit" onClick={createQuiz} disabled={busy || !!rosterError || (preview.roster !== null && !!preview.roster && preview.roster.matched_students.length === 0)}>{busy && <LoaderCircle className="spin" size={16} />}{busy ? "正在创建" : preview.cutoff_reached ? "创建并准备问题" : "提前创建并准备问题"}</button>
                   {createdCode && selected && <div className="code-reveal"><div className="reveal-symbol"><Check size={18} /></div><div><span>测评已创建</span><small>复制学生链接即可发布；备用码只需在登录异常时提供。</small></div><div className="inline-actions"><button onClick={() => void copyText(studentLink(selected.id), "学生链接已复制")}><Copy size={16} />复制学生链接</button><details><summary>备用码</summary><strong>{createdCode}</strong><button className="secondary" onClick={() => void copyText(createdCode, "备用测评码已复制")}>复制</button></details></div></div>}
@@ -681,7 +803,11 @@ export function AdminApp() {
         {view === "results" && selected && <>
           <header>
             <div><button className="back" onClick={() => setView("list")}><ArrowLeft size={15} />返回测评管理</button><h1>{selected.name}</h1><p><span className="live-dot" />结果每 10 秒自动刷新</p></div>
-            <a className="button secondary" href={`/api/admin/quizzes/${selected.id}/export`}><Download size={16} />导出 CSV</a>
+            <div className="header-actions"><a className="button secondary" href={`/api/admin/quizzes/${selected.id}/export`}><Download size={16} />导出 CSV</a>
+              <label><input type="checkbox" checked={includeAnswers} onChange={event => setIncludeAnswers(event.target.checked)} />
+                同时公布参考答案与正确选项</label>
+              <button type="button" onClick={publishGrades} disabled={busy || (selected.scores_published && !includeAnswers)}>
+                {selected.scores_published ? "追加公布答案" : "公布成绩"}</button></div>
           </header>
           <section className="result-overview">
             <div><Users size={18} /><span>学生总数<strong>{results.length}</strong></span></div>
@@ -690,6 +816,14 @@ export function AdminApp() {
           </section>
           <section className="card table-card result-card">
             {results.length ? <><div className="result-toolbar"><label><Search size={15} /><input aria-label="搜索学号" value={resultQuery} onChange={event => setResultQuery(event.target.value)} placeholder="搜索学号" /></label><div className="filter-tabs" role="group" aria-label="筛选作答状态"><button className={resultFilter === "all" ? "active" : ""} onClick={() => setResultFilter("all")}>全部</button><button className={resultFilter === "finished" ? "active" : ""} onClick={() => setResultFilter("finished")}>已完成</button><button className={resultFilter === "active" ? "active" : ""} onClick={() => setResultFilter("active")}>进行中</button><button className={resultFilter === "pending" ? "active" : ""} onClick={() => setResultFilter("pending")}>未作答</button><button className={resultFilter === "attention" ? "active" : ""} onClick={() => setResultFilter("attention")}>需关注</button></div><span>{filteredResults.length} / {results.length} 人</span></div>{filteredResults.length ? <table className="result-table"><thead><tr><th>学号</th><th>覆盖题目</th><th>问题数</th><th>原始分</th><th>百分制</th><th>最低置信度</th><th>状态</th><th></th></tr></thead><tbody>{filteredResults.map(result => <tr key={result.student_number}><td className="mono student-number">{result.student_number}</td><td>{result.problem_count}</td><td>{result.question_count}</td><td><strong>{(result.review_required ? result.auto_score : result.final_score) ?? "—"}{result.max_score ? ` / ${result.max_score}` : ""}</strong>{result.review_required && <small>建议分 · 待复核</small>}{result.manual_score !== null && <small>人工覆盖</small>}</td><td><strong className="percent-score">{result.final_percent !== null ? `${result.final_percent.toFixed(1)}%` : "—"}</strong></td><td>{result.confidence?.toFixed(2) ?? "—"}</td><td><span className={`status-pill status-${statusClass(result.review_required ? "GRADING_ERROR" : result.attempt_status || result.participant_status)}`}>{statusLabel(result.review_required ? "REVIEW_REQUIRED" : result.attempt_status || result.participant_status)}</span>{result.quality_attention && <span className="status-pill quality-attention">题目质量需关注</span>}{result.timed_out && <small>超时自动交卷</small>}</td><td>{result.attempt_id && <button className="link" disabled={busy} onClick={() => void loadAttempt(result.attempt_id!)}>查看详情</button>}{(!result.attempt_id || result.attempt_status === "RESET") && result.prepared_problem_count > 0 && <button className="link" disabled={busy} onClick={() => void loadPrepared(result.student_number)}>{result.attempt_id ? "查看新题" : "查看详情"}</button>}</td></tr>)}</tbody></table> : <div className="filtered-empty">没有符合当前条件的学生</div>}</> : <div className="empty-state compact-empty"><div className="empty-symbol"><Users size={25} /></div><h2>暂时没有作答记录</h2><p>学生进入并开始测评后，进度会自动显示在这里。</p></div>}
+          </section>
+          <section className="card appeal-list">
+            <h2>待处理申诉 · {appeals.filter(a => a.state === "pending").length}</h2>
+            {appeals.filter(a => a.state === "pending").map(a => <article key={a.id}>
+              <p><strong>{a.question_snapshot}</strong> · 申请时 {a.score_snapshot} / 2 分</p>
+              <p>学生答案：{a.answer_snapshot || "未作答"}</p><p>申请理由：{a.reason}</p>
+              <button type="button" onClick={() => { setResolvingAppeal(a.id); setAppealResolution(""); setAppealScore(""); }}>处理申诉</button>
+            </article>)}
           </section>
         </>}
 
@@ -700,9 +834,13 @@ export function AdminApp() {
             <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><ProblemStatement className="statement" text={group.problem.statement} /><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
             <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
               <div className="question-title-row"><div className="question-index">问题 {index + 1}</div>{preparedDetail.can_edit && <button className="link" disabled={busy} onClick={() => { setEditingQuestion({...question, grading_points: [...question.grading_points]}); setEditError(""); }}>编辑问题</button>}</div><ProblemStatement className="generated-question" text={question.question} />
-              <QualityAudit review={question.quality} />
+               {qualityAuditEnabled && <QualityAudit review={question.quality} />}
+               {question.choices && <ol>{question.choices.map(choice => <li key={choice.id}>{choice.id}. <ProblemStatement text={choice.text} /></li>)}</ol>}
               {question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
-              <dl><dt>参考答案</dt><dd>{question.reference_answer}</dd><dt>出题评分点</dt><dd>{question.grading_points.join("；")}</dd></dl>
+               <dl><dt>参考答案</dt><dd>{question.reference_answer}</dd>
+                 {question.core_idea && <><dt>核心理解目标</dt><dd>{question.core_idea}</dd></>}
+                 {question.correct_choice_id && <><dt>正确选项</dt><dd>{question.correct_choice_id}</dd></>}
+                 {question.grading_points.length > 0 && <><dt>出题评分点</dt><dd>{question.grading_points.join("；")}</dd></>}</dl>
             </article>)}</div>
           </section>)}</div>
         </>}
@@ -710,7 +848,7 @@ export function AdminApp() {
         {view === "attempt" && attempt && <>
           <header>
             <div><button className="back" onClick={() => setView("results")}><ArrowLeft size={15} />返回测评结果</button><div className="eyebrow">STUDENT REVIEW</div><h1 className="mono">{attempt.student_number}</h1><p>共 {attemptGroups.length} 道题、{attempt.questions.length} 个问题 · <span className={`status-pill status-${statusClass(attempt.review_required ? "GRADING_ERROR" : attempt.status)}`}>{statusLabel(attempt.review_required ? "REVIEW_REQUIRED" : attempt.status)}</span></p>{attempt.completed_at && <p>完成时间：<time dateTime={attempt.completed_at}>{new Date(attempt.completed_at).toLocaleString("zh-CN", { hour12: false })}</time>{attempt.timed_out && "（到时自动交卷）"}</p>}</div>
-            <div className="header-actions"><button className="secondary" disabled={busy} onClick={regrade}><RefreshCw size={16} />重新评分</button><button className="danger" disabled={busy} onClick={resetAttempt}><RotateCcw size={16} />允许重新作答</button></div>
+            {!selected?.scores_published && <div className="header-actions"><button className="secondary" disabled={busy} onClick={regrade}><RefreshCw size={16} />重新评分</button><button className="danger" disabled={busy} onClick={resetAttempt}><RotateCcw size={16} />允许重新作答</button></div>}
           </header>
           <section className="detail-grid">
             <div className="problem-review-list">{attemptGroups.map(group => <section className="card problem-review" key={group.problem.id}>
@@ -718,29 +856,86 @@ export function AdminApp() {
               <details className="material-details"><summary><FileText size={15} />查看题面与提交代码</summary><div className="review-material"><ProblemStatement className="statement" text={group.problem.statement} /><div className="source-card"><CodeBlock code={group.sourceCode} language={group.language} /></div></div></details>
               <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
                 <div className="question-title-row"><div className="question-index">问题 {index + 1}</div><span className="question-score">{attempt.review_required ? "建议 " : ""}{question.score ?? "—"} / 2</span></div>
-                <ProblemStatement className="generated-question" text={question.question} />
+                 <ProblemStatement className="generated-question" text={question.question} />
+                 {question.choices && <ol>{question.choices.map(choice => <li key={choice.id}>{choice.id}. <ProblemStatement text={choice.text} /></li>)}</ol>}
                 {question.review_required && <p className="review-notice">{attempt.review_required ? "待教师复核" : "曾触发复核"}：{readableReviewReason(question.review_reason)}</p>}
-                <QualityAudit review={question.quality} />
+                 {qualityAuditEnabled && <QualityAudit review={question.quality} />}
+                 {question.choices && <ol>{question.choices.map(choice => <li key={choice.id}>{choice.id}. <ProblemStatement text={choice.text} /></li>)}</ol>}
               {question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
-                <dl><dt>学生回答</dt><dd className="student-answer">{question.student_answer ?? "尚未回答"}</dd><dt>评分原因</dt><dd>{question.reason ?? "—"}</dd><dt>置信度</dt><dd>{question.confidence?.toFixed(2) ?? "—"}</dd><dt>参考答案</dt><dd>{question.reference_answer}</dd></dl>
+                 <dl><dt>学生回答</dt><dd className="student-answer">{question.choice_id || question.student_answer || "尚未回答"}</dd>
+                   <dt>评分原因</dt><dd>{question.reason ?? "—"}</dd>
+                   <dt>有效分</dt><dd>{question.effective_score ?? question.score ?? "—"}</dd>
+                   <dt>置信度</dt><dd>{question.confidence?.toFixed(2) ?? "—"}</dd>
+                   <dt>参考答案</dt><dd>{question.reference_answer}</dd>
+                   {question.correct_choice_id && <><dt>正确选项</dt><dd>{question.correct_choice_id}</dd></>}
+                   {question.student_dispute && <><dt>学生异议</dt><dd>{question.dispute_reason || "学生标记题目有疑问"}</dd></>}</dl>
+                 {attempt.assessment_version === "lightweight_v1" && <div className="question-score-editor">
+                   <button type="button" onClick={() => { setEditingScoreQuestion(question.id || null);
+                     setQuestionScore(question.effective_score ?? question.score ?? 0); setQuestionScoreReason(""); }}>
+                     {question.review_required ? "处理复核" : "逐题改分"}</button>
+                   {editingScoreQuestion === question.id && <div>
+                     <label>有效分<input type="number" min="0" max="2" value={questionScore}
+                       onChange={event => setQuestionScore(Number(event.target.value))} /></label>
+                     <label>处理说明<textarea value={questionScoreReason}
+                       onChange={event => setQuestionScoreReason(event.target.value)} maxLength={5000} /></label>
+                     <button type="button" disabled={busy || !questionScoreReason.trim()}
+                       onClick={() => void saveQuestionScore(question.id!)}>确认并保存</button>
+                   </div>}
+                 </div>}
               </article>)}</div>
             </section>)}</div>
-            <div className="card override-card"><div className="override-heading"><h2>成绩复核</h2><ShieldCheck size={19} /></div>{attempt.review_required && <p className="review-notice">本次评分待复核，建议分尚未计入最终成绩。请检查题目和评分依据，填写总分与原因后保存。</p>}<div className="score compact">{(attempt.review_required ? attempt.auto_score : attempt.manual_override_score ?? attempt.auto_score) ?? "—"}<small> / {attempt.max_score}</small></div><div className="percent-large">{attempt.final_percent !== null ? `${attempt.final_percent.toFixed(1)}%` : "—"}</div><div className="score-meta"><span>{attempt.review_required ? "待复核建议分" : "当前百分制"}</span><span>自动总分 {attempt.auto_score ?? "—"}</span></div><form onSubmit={saveOverride}><label>人工覆盖分数<input type="number" min="0" max={attempt.max_score} value={overrideScore} onChange={event => setOverrideScore(Number(event.target.value))} /></label><label>覆盖原因<textarea required maxLength={5000} value={overrideReason} onChange={event => setOverrideReason(event.target.value)} placeholder="请填写复核依据" /></label><button disabled={busy}>{busy && <LoaderCircle className="spin" size={16} />}保存复核结果</button></form></div>
+            {attempt.assessment_version === "lightweight_v1" ?
+              <div className="card override-card"><h2>逐题成绩</h2><p>逐题复核后，总分按有效分相加。机器原始分与理由保留。</p>
+                <div className="score compact">{attempt.questions.reduce((sum, q) => sum + (q.effective_score ?? 0), 0)}<small> / {attempt.max_score}</small></div></div> :
+              <div className="card override-card"><div className="override-heading"><h2>成绩复核</h2><ShieldCheck size={19} /></div>{attempt.review_required && <p className="review-notice">本次评分待复核，建议分尚未计入最终成绩。请检查题目和评分依据，填写总分与原因后保存。</p>}<div className="score compact">{(attempt.review_required ? attempt.auto_score : attempt.manual_override_score ?? attempt.auto_score) ?? "—"}<small> / {attempt.max_score}</small></div><div className="percent-large">{attempt.final_percent !== null ? `${attempt.final_percent.toFixed(1)}%` : "—"}</div><div className="score-meta"><span>{attempt.review_required ? "待复核建议分" : "当前百分制"}</span><span>自动总分 {attempt.auto_score ?? "—"}</span></div><form onSubmit={saveOverride}><label>人工覆盖分数<input type="number" min="0" max={attempt.max_score} value={overrideScore} onChange={event => setOverrideScore(Number(event.target.value))} /></label><label>覆盖原因<textarea required maxLength={5000} value={overrideReason} onChange={event => setOverrideReason(event.target.value)} placeholder="请填写复核依据" /></label><button disabled={busy}>{busy && <LoaderCircle className="spin" size={16} />}保存复核结果</button></form></div>}
           </section>
         </>}
       </main>
 
       {editingQuestion && <div className="question-edit-overlay"><form className="card question-edit-dialog" onSubmit={savePreparedQuestion} role="dialog" aria-modal="true" aria-labelledby="question-edit-title">
-        <h2 id="question-edit-title">编辑问题</h2><p className="muted">支持 Markdown 与公式。请同步核对英文对照、参考答案和评分点。</p>
+        <h2 id="question-edit-title">编辑问题</h2><p className="muted">支持 Markdown 与公式。请同步核对英文对照与答案。</p>
         <label>中文题干<textarea required maxLength={500} value={editingQuestion.question} onChange={e => setEditingQuestion({...editingQuestion, question:e.target.value})} /></label>
         <label>英文对照<textarea required maxLength={800} value={editingQuestion.question_en || ""} onChange={e => setEditingQuestion({...editingQuestion, question_en:e.target.value})} /></label>
         <details><summary>预览题干</summary><ProblemStatement text={editingQuestion.question} /><ProblemStatement className="question-en" text={editingQuestion.question_en || ""} /></details>
         <label>参考答案<textarea required maxLength={5000} value={editingQuestion.reference_answer} onChange={e => setEditingQuestion({...editingQuestion, reference_answer:e.target.value})} /></label>
-        <label>评分点（每行一条，1–3 条）<textarea required maxLength={15002} value={editingQuestion.grading_points.join("\n")} onChange={e => setEditingQuestion({...editingQuestion, grading_points:e.target.value.split("\n")})} /></label>
-        <p className="muted">保存后原质量审核结论失效，可按需重新审核。</p>
+        {selected?.assessment_version === "lightweight_v1" ?
+          editingQuestion.response_format === "short_answer" ?
+            <label>核心理解目标<textarea required maxLength={1000} value={editingQuestion.core_idea || ""}
+              onChange={e => setEditingQuestion({...editingQuestion, core_idea:e.target.value})} /></label> :
+            <div className="edit-choices">
+              {editingQuestion.choices?.map((choice, i) => <div key={choice.id}>
+                <strong>{choice.id}</strong>
+                <label>中文选项<textarea required value={choice.text} onChange={e => setEditingQuestion({
+                  ...editingQuestion, choices: editingQuestion.choices?.map((old, j) =>
+                    j === i ? { ...old, text: e.target.value } : old),
+                })} /></label>
+                <label>英文选项<textarea required value={choice.text_en} onChange={e => setEditingQuestion({
+                  ...editingQuestion, choices: editingQuestion.choices?.map((old, j) =>
+                    j === i ? { ...old, text_en: e.target.value } : old),
+                })} /></label>
+                <ProblemStatement text={choice.text} />
+              </div>)}
+              <label>正确选项<select value={editingQuestion.correct_choice_id || ""}
+                onChange={e => setEditingQuestion({...editingQuestion, correct_choice_id:e.target.value})}>
+                <option value="">请选择</option>{editingQuestion.choices?.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+              </select></label>
+            </div>
+          : <label>评分点（每行一条，1–3 条）<textarea required maxLength={15002} value={editingQuestion.grading_points.join("\n")} onChange={e => setEditingQuestion({...editingQuestion, grading_points:e.target.value.split("\n")})} /></label>}
+        {qualityAuditEnabled && <p className="muted">保存后原质量审核结论失效，可按需重新审核。</p>}
         {editError && <div className="error" role="alert">{editError}</div>}
         <div className="inline-actions"><button type="button" className="secondary" disabled={busy} onClick={() => setEditingQuestion(null)}>取消</button><button disabled={busy}>{busy ? "正在保存…" : "保存修改"}</button></div>
       </form></div>}
+      {resolvingAppeal && <div className="question-edit-overlay"><section className="card question-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="appeal-title">
+        <h2 id="appeal-title">处理学生申诉</h2>
+        <p>维持原分时留空新分数；修改本题分数时填写 0–2。</p>
+        <label>面向学生的处理说明<textarea required value={appealResolution} maxLength={5000}
+          onChange={event => setAppealResolution(event.target.value)} /></label>
+        <label>新分数（可留空）<input type="number" min={0} max={2} value={appealScore}
+          onChange={event => setAppealScore(event.target.value)} /></label>
+        <div className="inline-actions"><button type="button" onClick={() => setResolvingAppeal(null)}>取消</button>
+          <button type="button" disabled={busy || !appealResolution.trim()} onClick={() => void resolveSelectedAppeal()}>
+            {busy ? "正在处理…" : "确认处理"}</button></div>
+      </section></div>}
       {toast && <div className="toast" role="status"><Check size={17} />{toast}</div>}
       {confirm && <ConfirmDialog title={confirm.title} description={confirm.description} confirmLabel={confirm.confirmLabel} danger={confirm.danger} busy={busy} onCancel={() => setConfirm(null)} onConfirm={() => void runConfirmedAction()} />}
     </div>

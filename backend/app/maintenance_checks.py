@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.integrations.uoj.repository import UOJRepository
-from app.services.llm_provider import GENERATOR_VERSION, GRADER_VERSION
+from app.services.llm_provider import GENERATOR_VERSION, GRADER_VERSION, LIGHTWEIGHT_GENERATOR_VERSION, LIGHTWEIGHT_GRADER_VERSION
 
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -33,6 +33,7 @@ def check_config() -> int:
     print(f"grading_review_confidence_threshold={settings.grading_review_confidence_threshold}")
     print(f"generation_global_concurrency={settings.generation_global_concurrency}")
     print(f"quality_audit_enabled={settings.quality_audit_enabled}")
+    print(f"lightweight_creation_enabled={settings.lightweight_creation_enabled}")
     print(f"quality_audit_timeout_seconds={settings.quality_audit_timeout_seconds}")
     print(f"quality_audit_max_tokens={settings.quality_audit_max_tokens}")
     print(f"grading_workers={settings.grading_workers}")
@@ -56,12 +57,14 @@ def smoke_check() -> int:
     required = (
         PROMPTS / f"{GENERATOR_VERSION}.txt",
         PROMPTS / f"{GRADER_VERSION}.txt",
+        PROMPTS / f"{LIGHTWEIGHT_GENERATOR_VERSION}.txt",
+        PROMPTS / f"{LIGHTWEIGHT_GRADER_VERSION}.txt",
     )
     missing = [item.name for item in required if not item.is_file()]
     if missing:
         print(f"smoke=failed missing={','.join(missing)}")
         return 1
-    print(f"smoke=ok prompt_version={GENERATOR_VERSION} grader_prompt_version={GRADER_VERSION}")
+    print(f"smoke=ok prompt_version={GENERATOR_VERSION} grader_prompt_version={GRADER_VERSION} lightweight_prompt_version={LIGHTWEIGHT_GENERATOR_VERSION} lightweight_grader_version={LIGHTWEIGHT_GRADER_VERSION}")
     for name in ("main.py", "services/attempt_maintenance.py", "services/quiz_service.py", "services/generation_service.py",
                  "services/llm_provider.py", "schemas/llm.py", f"prompts/{GRADER_VERSION}.txt"):
         path = PROMPTS.parent / name
@@ -87,6 +90,9 @@ async def check_preparation_schema():
         timeout_counts = (await db.execute(text("SELECT status, COUNT(*) FROM attempts WHERE timed_out = true OR status = 'EXPIRED' GROUP BY status"))).all()
         print("timeout_submissions=" + (",".join(f"{state}:{count}" for state, count in timeout_counts) or "empty"))
         await db.execute(text("SELECT quality_state, quality_result, quality_token FROM generation_jobs LIMIT 0"))
+        await db.execute(text("SELECT assessment_version, published_at, publish_answers FROM quizzes LIMIT 0"))
+        await db.execute(text("SELECT revision, answer_text FROM answer_drafts LIMIT 0"))
+        await db.execute(text("SELECT question_score_version FROM appeals LIMIT 0"))
         from app.services.quality_audit import QualityResult
         from pydantic import ValidationError
         import json
@@ -97,7 +103,7 @@ async def check_preparation_schema():
             except ValidationError as exc:
                 print("quality_validation=" + json.dumps([{"loc": e["loc"], "type": e["type"]} for e in exc.errors(include_input=False, include_context=False, include_url=False)]))
                 print("quality_response_length=" + str(len(raw)))
-        assert revision == "0006_question_quality" and control == 1
+        assert revision == "0007_lightweight_v1" and control == 1
         print(f"preparation_schema=ok revision={revision}")
         print("preparation_jobs=" + (",".join(f"{state}:{count}" for state, count in counts) or "empty"))
         from app.generation_diagnostics import latest_generation

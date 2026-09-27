@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import Settings
+from app.config import get_settings
 from app.models import (
     GenerationJob,
     Attempt,
@@ -22,6 +23,7 @@ from app.models import (
     QuizProblemSnapshot,
     QuizStatus,
     SubmissionSnapshot,
+    AnswerDraft,
 )
 from app.schemas.api import (
     ContestPreviewResponse,
@@ -35,7 +37,7 @@ from app.services.import_service import ImportBundle
 from app.services.llm_provider import LLMProvider, GENERATOR_VERSION
 from app.services.question_policy import allocated_kind
 from app.time_utils import ensure_utc
-from app.schemas.llm import QuestionGenerationResult
+from app.schemas.llm import QuestionGenerationResult, LightweightGenerationResult
 from app.services.generation_service import enqueue
 from app.services.roster_service import select_roster
 
@@ -51,8 +53,9 @@ def preview_from_bundle(bundle: ImportBundle, roster_text: str | None = None) ->
         submission_cutoff=bundle.cutoff,
         cutoff_reached=datetime.now(timezone.utc) >= ensure_utc(bundle.cutoff),
         problems=[
-            PreviewProblem(problem_id=item.problem_id, title=item.title)
-            for item in bundle.problems
+            PreviewProblem(problem_id=item.problem_id, title=item.title,
+                display_order=index, include_choice=(len(bundle.problems) < 3 or item.problem_id != max(p.problem_id for p in bundle.problems)))
+            for index, item in enumerate(sorted(bundle.problems, key=lambda p: p.problem_id), 1)
         ],
         numeric_student_accounts=len(bundle.students),
         students_with_eligible_problem=len(ready_students),
@@ -78,6 +81,20 @@ async def persist_quiz(
     if bundle.issues:
         # Agreed policy: bad student/problem pairs are excluded, while explicit issues remain in Preview.
         pass
+    settings = get_settings()
+    version = request.assessment_version or ("lightweight_v1" if settings.lightweight_creation_enabled else "legacy")
+    if version == "lightweight_v1" and not settings.lightweight_creation_enabled:
+        raise ValueError("新测评协议尚未开放创建")
+    problem_ids = {p.problem_id for p in bundle.problems}
+    if version == "lightweight_v1" and not problem_ids:
+        raise ValueError("本场 Contest 没有可测的原题")
+    defaults = problem_ids - {max(problem_ids)} if len(problem_ids) >= 3 else problem_ids
+    choice_ids = set(request.choice_problem_ids) if request.choice_problem_ids is not None else defaults
+    if version == "lightweight_v1" and (not problem_ids or len(choice_ids) != len(request.choice_problem_ids or list(choice_ids)) or not choice_ids <= problem_ids):
+        raise ValueError("问题安排必须使用本场原题且不能重复")
+    max_count = len(problem_ids) + len(choice_ids)
+    if version == "lightweight_v1" and request.time_mode == "per_question" and max_count * request.minutes_per_question > 180:
+        raise ValueError("自动计算的个人时长超过 180 分钟，请调整")
 
     quiz_code = generate_quiz_code()
     quiz = Quiz(
@@ -86,9 +103,11 @@ async def persist_quiz(
         quiz_code_hash=hash_secret(quiz_code),
         start_time=start_time.astimezone(timezone.utc),
         end_time=end_time.astimezone(timezone.utc),
-        duration_minutes=request.duration_minutes or 6,
-        minutes_per_question=3,
-        question_mode="all_positive_2",
+        duration_minutes=(request.duration_minutes or 6) if version == "legacy" else (request.duration_minutes or max_count * request.minutes_per_question),
+        minutes_per_question=3 if version == "legacy" else request.minutes_per_question,
+        question_mode="all_positive_2" if version == "legacy" else "lightweight_v1",
+        assessment_version=version,
+        time_mode="per_question" if version == "legacy" else request.time_mode,
         submission_cutoff=bundle.cutoff.astimezone(timezone.utc),
         status=QuizStatus.DRAFT,
         pre_generate=True,
@@ -98,12 +117,14 @@ async def persist_quiz(
     await db.flush()
 
     problem_map: dict[int, QuizProblemSnapshot] = {}
-    for problem in bundle.problems:
+    for order, problem in enumerate(sorted(bundle.problems, key=lambda p: p.problem_id), 1):
         snapshot = QuizProblemSnapshot(
             quiz_id=quiz.id,
             uoj_problem_id=problem.problem_id,
             title=problem.title,
             statement=problem.statement,
+            display_order=order,
+            include_choice=True if version == "legacy" else problem.problem_id in choice_ids,
         )
         db.add(snapshot)
         problem_map[problem.problem_id] = snapshot
@@ -168,6 +189,11 @@ async def _attempt_view(db: AsyncSession, attempt_id: uuid.UUID) -> StudentQuest
         )
     ).scalar_one()
     current = next((item for item in attempt.questions if item.answer is None), None)
+    lightweight = attempt.assessment_version == "lightweight_v1"
+    drafts = {}
+    if lightweight:
+        drafts = {d.question_id: d for d in (await db.scalars(select(AnswerDraft)
+            .where(AnswerDraft.attempt_id == attempt.id))).all()}
     snapshot = current.submission_snapshot if current is not None else attempt.selected_submission
     same_problem_index = None
     if current is not None:
@@ -178,6 +204,20 @@ async def _attempt_view(db: AsyncSession, attempt_id: uuid.UUID) -> StudentQuest
             and item.submission_snapshot_id == current.submission_snapshot_id
         )
     return StudentQuestionResponse(
+        assessment_version=attempt.assessment_version,
+        duration_minutes=int((ensure_utc(attempt.deadline_at) - ensure_utc(attempt.started_at)).total_seconds() // 60)
+            if attempt.deadline_at and attempt.started_at else None,
+        questions=[dict(id=str(item.id), index=item.question_index, type=item.question_type.value,
+            response_format=item.response_format, question=item.question_text, question_en=item.question_text_en,
+            choices=item.choices_json, problem_id=item.submission_snapshot.uoj_problem_id,
+            problem_title=item.submission_snapshot.problem.title, problem_statement=item.submission_snapshot.problem.statement,
+            source_code=item.submission_snapshot.source_code, language=item.submission_snapshot.language,
+            draft=dict(answer_text=drafts[item.id].answer_text, choice_id=drafts[item.id].choice_id,
+                revisit=drafts[item.id].revisit, dispute=drafts[item.id].dispute,
+                dispute_reason=drafts[item.id].dispute_reason, revision=drafts[item.id].revision)
+                if item.id in drafts else dict(answer_text="", choice_id=None, revisit=False, dispute=False,
+                    dispute_reason=None, revision=0))
+            for item in attempt.questions] if lightweight and attempt.status == AttemptStatus.IN_PROGRESS else [],
         attempt_id=attempt.id,
         server_time=datetime.now(timezone.utc),
         draft_revision=attempt.draft_revision,
@@ -243,6 +283,8 @@ async def start_attempt(
 
     now = datetime.now(timezone.utc)
     quiz = participant.quiz
+    if quiz.published_at is not None:
+        raise HTTPException(409, "成绩已公布，不能开始新作答")
     quiz_start = ensure_utc(quiz.start_time)
     entry_deadline = ensure_utc(quiz.end_time)
     if quiz.status != QuizStatus.PUBLISHED or now < quiz_start or now >= entry_deadline:
@@ -258,6 +300,7 @@ async def start_attempt(
                     SubmissionSnapshot.uoj_score.is_not(None),
                     SubmissionSnapshot.uoj_score > 0,
                 ).order_by(SubmissionSnapshot.uoj_problem_id)
+                .options(selectinload(SubmissionSnapshot.problem))
             )
         ).scalars().all()
     )
@@ -284,13 +327,23 @@ async def start_attempt(
             snapshot.id not in by_snapshot or by_snapshot[snapshot.id].state != "succeeded" for snapshot in snapshots
         ):
             raise HTTPException(409, "你的问题尚未准备完成，请稍后再试或联系教师")
-        prepared = [(snapshot, by_snapshot[snapshot.id], QuestionGenerationResult.model_validate(by_snapshot[snapshot.id].result_json))
-            for snapshot in snapshots]
+        prepared = []
+        for snapshot in snapshots:
+            job = by_snapshot[snapshot.id]
+            if quiz.assessment_version == "lightweight_v1":
+                generated = LightweightGenerationResult.model_validate(job.result_json)
+                expected = 2 if snapshot.problem.include_choice else 1
+                if len(generated.questions) != expected or (expected == 2 and generated.questions[1].type != job.second_kind):
+                    raise HTTPException(409, "预生成题目结构与冻结配置不一致")
+            else:
+                generated = QuestionGenerationResult.model_validate(job.result_json)
+            prepared.append((snapshot, job, generated))
         participant.assigned_submission_snapshot_id = snapshots[0].id
         attempt = Attempt(quiz_id=quiz.id, participant_id=participant.id, attempt_no=round_no,
             selected_submission_snapshot_id=snapshots[0].id, status=AttemptStatus.IN_PROGRESS,
-            session_id=session_id, started_at=now,
-            deadline_at=now + timedelta(minutes=len(snapshots) * 2 * quiz.minutes_per_question))
+            session_id=session_id, started_at=now, assessment_version=quiz.assessment_version,
+            deadline_at=now + timedelta(minutes=(quiz.duration_minutes if quiz.assessment_version == "lightweight_v1" and quiz.time_mode == "fixed"
+                else sum(len(generated.questions) for _, _, generated in prepared) * quiz.minutes_per_question)))
         db.add(attempt)
         await db.flush()
         index = 0
@@ -299,7 +352,10 @@ async def start_attempt(
                 index += 1
                 db.add(Question(attempt_id=attempt.id, submission_snapshot_id=snapshot.id, question_index=index,
                     question_type=item.type, question_text=item.question, question_text_en=item.question_en,
-                    reference_answer=item.reference_answer, grading_points_json=item.grading_points,
+                    reference_answer=item.reference_answer, grading_points_json=getattr(item, "grading_points", []),
+                    response_format=getattr(item, "response_format", "short_answer"),
+                    choices_json=[c.model_dump() for c in item.choices] if getattr(item, "choices", None) else None,
+                    correct_choice_id=getattr(item, "correct_choice_id", None), core_idea=getattr(item, "core_idea", None),
                     generator_model=job.model, generator_prompt_version=job.prompt_version,
                     generator_raw_response=job.raw_response))
         await db.commit()
@@ -314,6 +370,7 @@ async def start_attempt(
         attempt_no=(latest.attempt_no + 1) if latest else 1,
         selected_submission_snapshot_id=chosen.id,
         status=AttemptStatus.PREPARING,
+        assessment_version=quiz.assessment_version,
         session_id=session_id,
     )
     db.add(attempt)
@@ -430,6 +487,8 @@ async def reset_attempt(db: AsyncSession, attempt_id: uuid.UUID) -> None:
     if attempt.attempt_no != latest_no:
         raise HTTPException(409, "只能重置最新一次作答")
     quiz = await db.get(Quiz, attempt.quiz_id)
+    if quiz.published_at is not None:
+        raise HTTPException(409, "成绩已公布，不能重置作答")
     if quiz.pre_generate and datetime.now(timezone.utc) >= ensure_utc(quiz.end_time):
         raise HTTPException(409, "进入时间已结束，请另建测评安排重新作答")
     attempt.status = AttemptStatus.RESET

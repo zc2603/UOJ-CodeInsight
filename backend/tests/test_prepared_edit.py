@@ -26,7 +26,7 @@ async def test_edit_updates_student_question_and_rejects_stale_or_started(db):
     other = job.result_json["questions"][1].copy()
     await edit_prepared(db, quiz.id, participant.student_number, job.id, 1, payload)
     assert job.result_json["questions"][1] == other
-    assert job.quality_state == "not_requested" and job.quality_token is None
+    assert job.quality_state == "paused" and job.quality_token is None
     with pytest.raises(HTTPException) as error:
         await edit_prepared(db, quiz.id, participant.student_number, job.id, 1, payload)
     assert error.value.status_code == 409

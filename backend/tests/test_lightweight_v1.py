@@ -11,9 +11,10 @@ from app.config import Settings, get_settings
 from app.integrations.uoj.schemas import UOJProblem, UOJSubmissionRequirement
 from app.models import (Answer, AnswerDraft, Appeal, Attempt, AttemptStatus, GenerationControl, GenerationJob,
     Question, QuizProblemSnapshot, ReviewIssue, ScoreAudit)
-from app.api.admin import delete_quiz
+from app.api.admin import delete_quiz, request_quality
 from app.schemas.api import LightweightDraftRequest, LightweightSubmitRequest, QuizCreateRequest
 from app.services import generation_service
+from app.services.quality_audit import claim as claim_quality
 from app.services.grading_queue import claim_grading
 from app.services.grading_service import grade_attempt
 from app.services.import_service import ImportBundle, ImportedSubmission
@@ -110,6 +111,21 @@ async def test_fixed_duration_and_invalid_choice_configuration(db):
     third = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
         student_number="231250003", session_id="fixed")
     assert third.question_count == 1 and third.duration_minutes == 17
+
+
+@pytest.mark.asyncio
+async def test_new_protocol_never_enters_legacy_quality_audit(db, monkeypatch):
+    monkeypatch.setenv("QUALITY_AUDIT_ENABLED", "true")
+    get_settings.cache_clear()
+    quiz = await prepared_quiz(db)
+    jobs = (await db.scalars(select(GenerationJob).where(GenerationJob.quiz_id == quiz.id))).all()
+    assert jobs and all(job.quality_state != "queued" for job in jobs)
+    jobs[0].quality_state = "queued"  # Even a stale/manual state must not be claimed.
+    await db.commit()
+    assert await claim_quality(db) is None
+    with pytest.raises(HTTPException) as denied:
+        await request_quality(jobs[0].id, db)
+    assert denied.value.status_code == 409
 
 
 @pytest.mark.asyncio

@@ -262,7 +262,7 @@ async def finish(db, settings, identity, *, result=None, raw=None, error=None):
         job.state = "succeeded"
         job.result_json = result.model_dump(mode="json")
         job.raw_response = raw
-        if settings.quality_audit_enabled and job.prompt_version != "lightweight_v1":
+        if settings.quality_audit_enabled and job.prompt_version != LIGHTWEIGHT_GENERATOR_VERSION:
             job.quality_state = "queued"
     await db.commit()
     return True

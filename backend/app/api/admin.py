@@ -52,6 +52,7 @@ from app.services.quiz_service import persist_quiz, preview_from_bundle, reset_a
 from app.time_utils import ensure_utc
 from app.services.generation_service import open_quiz, reopen_quiz, regenerate_prepared, retry_failed, summarize, stop_preparation
 from app.services.publication import publish as publish_scores, score_question, resolve_appeal, effective_attempt_score, effective_score
+from app.services.llm_provider import LIGHTWEIGHT_GENERATOR_VERSION
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -630,7 +631,7 @@ async def request_quality(job_id: uuid.UUID, db: AsyncSession = Depends(get_db))
         raise HTTPException(409, "质量审核未启用")
     if job is None:
         raise HTTPException(404, "题目不存在")
-    if job.prompt_version == "lightweight_v1":
+    if job.prompt_version == LIGHTWEIGHT_GENERATOR_VERSION:
         raise HTTPException(409, "新协议不使用独立质量审核")
     if job.state != "succeeded" or job.quality_state not in ("not_requested", "failed", "done"):
         raise HTTPException(409, "当前题目不能申请审核")

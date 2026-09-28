@@ -20,8 +20,10 @@ from app.services.llm_provider import (
     OpenAICompatibleLLMProvider, LIGHTWEIGHT_GENERATOR_VERSION, LIGHTWEIGHT_GRADER_VERSION,
 )
 
-SESSION = "20260928-lightweight-v1-approved"
-MAX_REQUESTS = 50
+SESSION = "20260928-lightweight-v2-confirmed-recheck"
+PRIOR_REQUESTS = 2
+PRIOR_ESTIMATED_CNY = 0.040548
+MAX_REQUESTS = 48  # Additional requests; cumulative session ceiling is 50.
 MAX_TOKENS = 4096
 MAX_BODY_BYTES = 32768
 MAX_CNY = 100
@@ -56,7 +58,9 @@ int main() {
     }
     cout << (ok && top == 0 ? "YES" : "NO");
 }'''),
-    dict(name="linked_state", kind="modification", title="删除链表中的首个指定值", statement="初始链表为2→4→2→7，以数组记录值和后继，0代表空节点。输入整数x（1≤x≤9），删除第一个值为x的节点，不存在则保持原链表。按顺序输出剩余节点的值。", source='''#include <iostream>
+    # Third ordered synthetic problem: the highest problem_id gets one
+    # explanation question and no second question.
+    dict(name="linked_state", kind=None, title="删除链表中的首个指定值", statement="初始链表为2→4→2→7，以数组记录值和后继，0代表空节点。输入整数x（1≤x≤9），删除第一个值为x的节点，不存在则保持原链表。按顺序输出剩余节点的值。", source='''#include <iostream>
 using namespace std;
 int main() {
     int value[5] = {0, 2, 4, 2, 7};
@@ -69,7 +73,8 @@ int main() {
     }
     for (int p = head; p != 0; p = next[p]) cout << value[p] << ' ';
 }'''),
-    dict(name="flawed_valid_submission", kind=None, title="数组最大值", statement="输入 n（1≤n≤5）及 n 个整数（−9≤a[i]≤9），输出数组最大值。该提交存在缺陷，但源码可分析，部分合法输入可得到正确结果。", source='''#include <iostream>
+    # Auxiliary type-coverage case; it is not assigned a problem_id/order.
+    dict(name="flawed_valid_submission", kind="modification", title="数组最大值", statement="输入 n（1≤n≤5）及 n 个整数（−9≤a[i]≤9），输出数组最大值。该提交存在缺陷，但源码可分析，部分合法输入可得到正确结果。", source='''#include <iostream>
 using namespace std;
 int main() {
     int n, a[5]; cin >> n;
@@ -112,9 +117,11 @@ class RequestGuard:
                 or body.get("model") != "deepseek-flash" or body.get("max_tokens") != MAX_TOKENS
                 or len(request.content) > MAX_BODY_BYTES):
                 raise RegressionStop("Request outside approved model, endpoint or size")
-            if self.report["http_requests"] >= MAX_REQUESTS:
+            if (self.report["http_requests"] >= MAX_REQUESTS
+                or PRIOR_REQUESTS + self.report["http_requests"] >= 50):
                 raise RegressionStop("HTTP request cap reached")
-            if self.report["reserved_peak_cny"] + RESERVE_PER_REQUEST > MAX_CNY:
+            if (PRIOR_ESTIMATED_CNY + self.report["reserved_peak_cny"] + RESERVE_PER_REQUEST
+                > MAX_CNY):
                 raise RegressionStop("Cost cap reached")
             self.report["http_requests"] += 1
             self.report["reserved_peak_cny"] += RESERVE_PER_REQUEST
@@ -138,6 +145,8 @@ class RequestGuard:
         record["estimated_peak_cny"] = (usage.get("prompt_tokens", 0) * INPUT_CNY_PER_M
             + usage.get("completion_tokens", 0) * OUTPUT_CNY_PER_M) / 1_000_000
         self.report["estimated_peak_cny"] = sum(r.get("estimated_peak_cny", 0) for r in self.report["requests"])
+        self.report["cumulative_estimated_peak_cny"] = (
+            PRIOR_ESTIMATED_CNY + self.report["estimated_peak_cny"])
         if response.status_code in (401, 402, 403):
             self.save()
             raise RegressionStop("Authentication or billing failure")
@@ -154,7 +163,7 @@ class RequestGuard:
         self.save()
         if self.consecutive_structure_errors >= 2:
             raise RegressionStop("Two consecutive structure errors")
-        if self.report["estimated_peak_cny"] >= MAX_CNY:
+        if self.report["cumulative_estimated_peak_cny"] >= MAX_CNY:
             raise RegressionStop("Actual estimated cost cap reached")
 
 
@@ -174,7 +183,7 @@ async def run(output: Path, *, settings=None, provider_factory=GuardedProvider, 
     if settings.llm_provider == "mock" or settings.llm_model != "deepseek-flash" or settings.llm_base_url.rstrip("/") != "https://api.deepseek.com":
         raise RegressionStop("Approved run requires the existing official Flash provider")
     settings = settings.model_copy(update={"llm_max_concurrency": 1, "llm_max_tokens": MAX_TOKENS})
-    if RESERVE_PER_REQUEST * MAX_REQUESTS > MAX_CNY:
+    if PRIOR_ESTIMATED_CNY + RESERVE_PER_REQUEST * MAX_REQUESTS > MAX_CNY:
         raise RegressionStop("Worst-case cost exceeds approval")
     output.mkdir(parents=True, exist_ok=False)
     if claim:
@@ -185,10 +194,15 @@ async def run(output: Path, *, settings=None, provider_factory=GuardedProvider, 
             os.fsync(handle.fileno())
     report = dict(session=SESSION, model=settings.llm_model, generator=LIGHTWEIGHT_GENERATOR_VERSION,
         grader=LIGHTWEIGHT_GRADER_VERSION, reasoning_effort=settings.llm_reasoning_effort,
-        max_requests=MAX_REQUESTS, max_tokens=MAX_TOKENS, max_body_bytes=MAX_BODY_BYTES,
+        prior_http_requests=PRIOR_REQUESTS, cumulative_http_cap=50,
+        prior_estimated_peak_cny=PRIOR_ESTIMATED_CNY,
+        max_requests=MAX_REQUESTS, additional_http_cap=MAX_REQUESTS,
+        max_tokens=MAX_TOKENS, max_body_bytes=MAX_BODY_BYTES,
         max_cny=MAX_CNY, concurrency=1, price_source=PRICE_SOURCE, price_checked="2026-09-28",
-        worst_case_cny=RESERVE_PER_REQUEST * MAX_REQUESTS, http_requests=0,
-        reserved_peak_cny=0.0, estimated_peak_cny=0.0, requests=[], generation=[], grading=[],
+        worst_case_cny=PRIOR_ESTIMATED_CNY + RESERVE_PER_REQUEST * MAX_REQUESTS,
+        http_requests=0, reserved_peak_cny=0.0, estimated_peak_cny=0.0,
+        cumulative_estimated_peak_cny=PRIOR_ESTIMATED_CNY,
+        requests=[], generation=[], grading=[],
         generation_semantic_review="pending", started_at=time.time())
 
     def save():

@@ -23,13 +23,13 @@ def request(**changes):
 async def test_http_cap_atomic_and_size_model_limits():
     report = guard_report()
     guard = runner.RequestGuard(report, lambda: None)
-    for _ in range(49): await guard.before(request())
+    for _ in range(runner.MAX_REQUESTS - 1): await guard.before(request())
     results = await asyncio.gather(guard.before(request()), guard.before(request()), return_exceptions=True)
-    assert report["http_requests"] == 50
+    assert report["http_requests"] == runner.MAX_REQUESTS
     assert sum(isinstance(result, runner.RegressionStop) for result in results) == 1
     for payload in (dict(model="unapproved"), dict(max_tokens=100000), dict(messages="x"*32768)):
         with pytest.raises(runner.RegressionStop): await guard.before(request(**payload))
-    assert report["http_requests"] == 50
+    assert report["http_requests"] == runner.MAX_REQUESTS
     assert report["reserved_peak_cny"] < runner.MAX_CNY
 
 
@@ -59,6 +59,12 @@ async def test_auth_and_two_schema_failures_stop_provider_retries(status, body, 
 
 @pytest.mark.asyncio
 async def test_fixed_scope_runs_once_and_counts_every_http(tmp_path):
+    assert [(case["name"], case["kind"]) for case in runner.CASES[:3]] == [
+        ("loop_short_circuit", "trace"), ("array_stack", "boundary"),
+        ("linked_state", None),
+    ]
+    assert runner.CASES[3]["name"] == "flawed_valid_submission"
+    assert runner.CASES[3]["kind"] == "modification"
     counter = 0
     def handler(req):
         nonlocal counter
@@ -90,6 +96,8 @@ async def test_fixed_scope_runs_once_and_counts_every_http(tmp_path):
     settings = Settings(_env_file=None, llm_provider="openai-compatible", llm_model="deepseek-flash")
     result = await runner.run(tmp_path / "first", settings=settings, provider_factory=TransportProvider)
     assert result["http_requests"] == counter == 10
+    assert result["prior_http_requests"] == 2 and result["cumulative_http_cap"] == 50
+    assert result["additional_http_cap"] == 48
     assert result["grading_passed"] and len(result["generation"]) == 4
     assert result["generation_semantic_review"] == "pending"
     assert (tmp_path / "first/report.json").exists()
@@ -102,6 +110,21 @@ async def test_fixed_scope_runs_once_and_counts_every_http(tmp_path):
 async def test_cost_reservation_blocks_before_dispatch():
     report = guard_report()
     report["reserved_peak_cny"] = runner.MAX_CNY
+    guard = runner.RequestGuard(report, lambda: None)
+    with pytest.raises(runner.RegressionStop): await guard.before(request())
+    assert report["http_requests"] == 0
+
+
+@pytest.mark.asyncio
+async def test_recheck_never_exceeds_cumulative_request_or_cost_scope():
+    report = guard_report()
+    report["http_requests"] = runner.MAX_REQUESTS
+    guard = runner.RequestGuard(report, lambda: None)
+    with pytest.raises(runner.RegressionStop): await guard.before(request())
+    assert report["http_requests"] == runner.MAX_REQUESTS
+
+    report = guard_report()
+    report["reserved_peak_cny"] = runner.MAX_CNY - runner.PRIOR_ESTIMATED_CNY
     guard = runner.RequestGuard(report, lambda: None)
     with pytest.raises(runner.RegressionStop): await guard.before(request())
     assert report["http_requests"] == 0

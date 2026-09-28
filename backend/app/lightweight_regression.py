@@ -20,11 +20,12 @@ from app.services.llm_provider import (
     OpenAICompatibleLLMProvider, LIGHTWEIGHT_GENERATOR_VERSION, LIGHTWEIGHT_GRADER_VERSION,
 )
 
-SESSION = "20260928-lightweight-v2-confirmed-recheck"
-PRIOR_REQUESTS = 2
-PRIOR_ESTIMATED_CNY = 0.040548
-MAX_REQUESTS = 48  # Additional requests; cumulative session ceiling is 50.
-MAX_TOKENS = 4096
+SESSION = "20260928-lightweight-v3-corrected-100k"
+PRIOR_REQUESTS = 7
+PRIOR_ESTIMATED_CNY = 0.200260
+MAX_REQUESTS = 43  # Additional requests; cumulative session ceiling is 50.
+MAX_CUMULATIVE_REQUESTS = 50
+MAX_TOKENS = 100000
 MAX_BODY_BYTES = 32768
 MAX_CNY = 100
 # Official CNY peak rates verified 2026-09-28. Ignore cache discounts for bounds.
@@ -118,7 +119,7 @@ class RequestGuard:
                 or len(request.content) > MAX_BODY_BYTES):
                 raise RegressionStop("Request outside approved model, endpoint or size")
             if (self.report["http_requests"] >= MAX_REQUESTS
-                or PRIOR_REQUESTS + self.report["http_requests"] >= 50):
+                or PRIOR_REQUESTS + self.report["http_requests"] >= MAX_CUMULATIVE_REQUESTS):
                 raise RegressionStop("HTTP request cap reached")
             if (PRIOR_ESTIMATED_CNY + self.report["reserved_peak_cny"] + RESERVE_PER_REQUEST
                 > MAX_CNY):
@@ -183,6 +184,8 @@ async def run(output: Path, *, settings=None, provider_factory=GuardedProvider, 
     if settings.llm_provider == "mock" or settings.llm_model != "deepseek-flash" or settings.llm_base_url.rstrip("/") != "https://api.deepseek.com":
         raise RegressionStop("Approved run requires the existing official Flash provider")
     settings = settings.model_copy(update={"llm_max_concurrency": 1, "llm_max_tokens": MAX_TOKENS})
+    if PRIOR_REQUESTS + MAX_REQUESTS > MAX_CUMULATIVE_REQUESTS:
+        raise RegressionStop("Cumulative HTTP request cap is inconsistent")
     if PRIOR_ESTIMATED_CNY + RESERVE_PER_REQUEST * MAX_REQUESTS > MAX_CNY:
         raise RegressionStop("Worst-case cost exceeds approval")
     output.mkdir(parents=True, exist_ok=False)
@@ -194,7 +197,7 @@ async def run(output: Path, *, settings=None, provider_factory=GuardedProvider, 
             os.fsync(handle.fileno())
     report = dict(session=SESSION, model=settings.llm_model, generator=LIGHTWEIGHT_GENERATOR_VERSION,
         grader=LIGHTWEIGHT_GRADER_VERSION, reasoning_effort=settings.llm_reasoning_effort,
-        prior_http_requests=PRIOR_REQUESTS, cumulative_http_cap=50,
+        prior_http_requests=PRIOR_REQUESTS, cumulative_http_cap=MAX_CUMULATIVE_REQUESTS,
         prior_estimated_peak_cny=PRIOR_ESTIMATED_CNY,
         max_requests=MAX_REQUESTS, additional_http_cap=MAX_REQUESTS,
         max_tokens=MAX_TOKENS, max_body_bytes=MAX_BODY_BYTES,

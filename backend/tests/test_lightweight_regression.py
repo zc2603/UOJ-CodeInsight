@@ -14,13 +14,16 @@ def guard_report():
 
 
 def request(**changes):
-    payload = dict(model="deepseek-flash", max_tokens=4096)
+    payload = dict(model="deepseek-flash", max_tokens=runner.MAX_TOKENS)
     payload.update(changes)
     return httpx.Request("POST", "https://api.deepseek.com/chat/completions", json=payload)
 
 
 @pytest.mark.asyncio
 async def test_http_cap_atomic_and_size_model_limits():
+    assert runner.PRIOR_REQUESTS + runner.MAX_REQUESTS == runner.MAX_CUMULATIVE_REQUESTS
+    assert runner.RESERVE_PER_REQUEST == pytest.approx(0.867584)
+    assert runner.PRIOR_ESTIMATED_CNY + runner.MAX_REQUESTS * runner.RESERVE_PER_REQUEST == pytest.approx(37.506372)
     report = guard_report()
     guard = runner.RequestGuard(report, lambda: None)
     for _ in range(runner.MAX_REQUESTS - 1): await guard.before(request())
@@ -48,7 +51,8 @@ class TransportProvider(runner.GuardedProvider):
 async def test_auth_and_two_schema_failures_stop_provider_retries(status, body, expected):
     report = guard_report()
     TransportProvider.handler = lambda req: httpx.Response(status, json=body)
-    provider = TransportProvider(Settings(_env_file=None, llm_max_tokens=4096), runner.RequestGuard(report, lambda: None))
+    provider = TransportProvider(Settings(_env_file=None, llm_max_tokens=runner.MAX_TOKENS),
+        runner.RequestGuard(report, lambda: None))
     try:
         with pytest.raises(runner.RegressionStop):
             await provider._request_json("test", "test", LightweightGenerationResult)
@@ -69,7 +73,7 @@ async def test_fixed_scope_runs_once_and_counts_every_http(tmp_path):
     def handler(req):
         nonlocal counter
         payload = json.loads(req.content)
-        assert payload["max_tokens"] == 4096
+        assert payload["max_tokens"] == runner.MAX_TOKENS
         if counter < 4:
             kind = runner.CASES[counter]["kind"]
             system = payload["messages"][0]["content"]
@@ -93,11 +97,14 @@ async def test_fixed_scope_runs_once_and_counts_every_http(tmp_path):
         return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(content)}}],
             "usage": {"prompt_tokens": 100, "completion_tokens": 100}})
     TransportProvider.handler = handler
-    settings = Settings(_env_file=None, llm_provider="openai-compatible", llm_model="deepseek-flash")
+    settings = Settings(_env_file=None, llm_provider="openai-compatible", llm_model="deepseek-flash",
+        llm_max_tokens=runner.MAX_TOKENS)
     result = await runner.run(tmp_path / "first", settings=settings, provider_factory=TransportProvider)
     assert result["http_requests"] == counter == 10
-    assert result["prior_http_requests"] == 2 and result["cumulative_http_cap"] == 50
-    assert result["additional_http_cap"] == 48
+    assert result["prior_http_requests"] == 7
+    assert result["cumulative_http_cap"] == runner.MAX_CUMULATIVE_REQUESTS
+    assert result["additional_http_cap"] == 43
+    assert result["max_tokens"] == 100000
     assert result["grading_passed"] and len(result["generation"]) == 4
     assert result["generation_semantic_review"] == "pending"
     assert (tmp_path / "first/report.json").exists()

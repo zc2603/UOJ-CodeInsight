@@ -658,7 +658,8 @@ async def update_prepared_question(quiz_id: uuid.UUID, student_number: str, job_
 
 
 class PublishScoresRequest(BaseModel):
-    include_answers: bool = False
+    # Retained for older clients; publication always includes reference answers.
+    include_answers: bool = True
 
 
 @router.post("/quizzes/{quiz_id}/publish-scores")

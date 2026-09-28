@@ -183,13 +183,17 @@ async def test_draft_submit_review_publish_and_appeal(db):
     await score_question(db, attempt.id, question.id, score=2, reason="确认理解",
         actor="teacher", expected_version=attempt.score_version)
     published = await publish(db, quiz.id, "teacher")
-    assert published["published"]
+    assert published["published"] and published["include_answers"]
     result = await student_result(db, quiz.id, "231250001")
     assert result["score"] == 10 and result["max_score"] == 10
-    assert all("correct_choice_id" not in q and "reference_answer" not in q for q in result["questions"])
-    await publish(db, quiz.id, "teacher", include_answers=True)
+    assert all("correct_choice_id" in q and "reference_answer" in q for q in result["questions"])
+    # Older already-published records disclose answers under the current policy.
+    quiz.publish_answers = False
+    await db.commit()
     disclosed = await student_result(db, quiz.id, "231250001")
     assert all("reference_answer" in q and "correct_choice_id" in q for q in disclosed["questions"])
+    # A stale client cannot accidentally suppress answers when republishing.
+    assert (await publish(db, quiz.id, "teacher", include_answers=False))["include_answers"]
     appeal = await request_appeal(db, quiz.id, "231250001", question.id,
         reason="请再看一下", request_key="appeal-synthetic-1")
     same = await request_appeal(db, quiz.id, "231250001", question.id,

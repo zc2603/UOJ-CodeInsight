@@ -9,6 +9,7 @@ import { ProblemStatement } from "../components/ProblemStatement";
 import { QualityAudit } from "../components/QualityAudit";
 import { CodeBlock } from "../components/CodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { AppealPanel, AppealReviewDialog, type AppealItem } from "../components/AppealPanel";
 import type { AttemptDetail, AttemptQuestionDetail, QuizSummary, ResultRow, PreparedDetail } from "../types";
 
 function readableReviewReason(reason: string | null | undefined) {
@@ -120,13 +121,11 @@ export function AdminApp() {
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [resultQuery, setResultQuery] = useState("");
   const [resultFilter, setResultFilter] = useState<"all" | "finished" | "active" | "attention" | "pending">("all");
-  const [includeAnswers, setIncludeAnswers] = useState(false);
-  const [appeals, setAppeals] = useState<{ id: string; attempt_id: string; question_id: string;
-    state: string; reason: string; score_snapshot: number; question_snapshot: string;
-    answer_snapshot: string; resolution: string | null }[]>([]);
+  const [appeals, setAppeals] = useState<AppealItem[]>([]);
   const [resolvingAppeal, setResolvingAppeal] = useState<string | null>(null);
   const [appealResolution, setAppealResolution] = useState("");
   const [appealScore, setAppealScore] = useState<string>("");
+  const [appealError, setAppealError] = useState("");
   const [editingScoreQuestion, setEditingScoreQuestion] = useState<string | null>(null);
   const [questionScore, setQuestionScore] = useState(0);
   const [questionScoreReason, setQuestionScoreReason] = useState("");
@@ -134,6 +133,8 @@ export function AdminApp() {
   const attemptGroups = attempt ? groupAttemptQuestions(attempt.questions) : [];
   const [studentCount, setStudentCount] = useState<number | null>(null);
   const totalFinished = quizzes.reduce((sum, quiz) => sum + quiz.finished_count, 0);
+  const activeAppeal = appeals.find(appeal => appeal.id === resolvingAppeal);
+  const studentForAttempt = (id: string) => results.find(result => result.attempt_id === id)?.student_number ?? "学生申诉";
   const filteredResults = results.filter(result => {
     const matchesQuery = result.student_number.includes(resultQuery.trim());
     const matchesStatus = resultFilter === "all" || resultBucket(result) === resultFilter;
@@ -205,6 +206,7 @@ export function AdminApp() {
     if (view !== "results" || !selected) return;
     const timer = window.setInterval(() => {
       void api<ResultRow[]>(`/api/admin/quizzes/${selected.id}/results`).then(setResults).catch(() => undefined);
+      void api<AppealItem[]>(`/api/admin/quizzes/${selected.id}/appeals`).then(setAppeals).catch(() => undefined);
     }, 10000);
     return () => window.clearInterval(timer);
   }, [view, selected]);
@@ -421,15 +423,13 @@ export function AdminApp() {
   function publishGrades() {
     if (!selected) return;
     const quiz = selected;
-    setConfirm({ title: quiz.scores_published ? "公开参考答案与正确选项？" : "公布本场成绩？",
-      description: `涉及 ${results.length} 名学生。默认公布逐问得分、本人答案和评分理由。
-        ${includeAnswers ? "本次还会公布参考答案和正确选项；开启后不能关闭。" : "参考答案与正确选项暂不公布。"}
-        公布后不得重新开放、Reset 或自动重评。`,
+    setConfirm({ title: "公布本场成绩？",
+      description: `涉及 ${results.length} 名学生。学生将看到本人作答、逐问得分、评分理由，以及参考答案和正确选项。公布后不得重新开放、重置作答或自动重评。`,
       confirmLabel: "确认公布", action: async () => {
         setBusy(true);
         try {
           await api(`/api/admin/quizzes/${quiz.id}/publish-scores`, {
-            method: "POST", body: JSON.stringify({ include_answers: includeAnswers }),
+            method: "POST", body: JSON.stringify({}),
           });
           setToast("成绩已公布");
           await loadQuizzes();
@@ -458,6 +458,7 @@ export function AdminApp() {
     const appeal = appeals.find(a => a.id === resolvingAppeal);
     if (!appeal || !selected) return;
     setBusy(true);
+    setAppealError("");
     try {
       const detail = await api<AttemptDetail>(`/api/admin/attempts/${appeal.attempt_id}`);
       await api(`/api/admin/appeals/${appeal.id}/resolve`, {
@@ -469,7 +470,7 @@ export function AdminApp() {
       setAppealScore("");
       await showResults(selected);
       setToast("申诉已处理");
-    } catch (error) { setMessage((error as Error).message); }
+    } catch (error) { setAppealError((error as Error).message); }
     finally { setBusy(false); }
   }
 
@@ -677,7 +678,7 @@ export function AdminApp() {
         <div className="admin-aside-footer"><div><BookOpenCheck size={15} /><span><strong>课程测评</strong><small>教师工作台</small></span></div><button type="button" onClick={() => void logout()} title="退出登录"><LogOut size={16} />退出</button></div>
       </aside>
 
-      <main className="admin-main">
+      <main className={`admin-main ${view === "results" ? "admin-results" : ""}`}>
         {message && <div className="page-error error" role="alert"><CircleAlert size={17} />{message}</div>}
 
         {view === "list" && <>
@@ -801,29 +802,24 @@ export function AdminApp() {
         </>}
 
         {view === "results" && selected && <>
-          <header>
-            <div><button className="back" onClick={() => setView("list")}><ArrowLeft size={15} />返回测评管理</button><h1>{selected.name}</h1><p><span className="live-dot" />结果每 10 秒自动刷新</p></div>
-            <div className="header-actions"><a className="button secondary" href={`/api/admin/quizzes/${selected.id}/export`}><Download size={16} />导出 CSV</a>
-              <label><input type="checkbox" checked={includeAnswers} onChange={event => setIncludeAnswers(event.target.checked)} />
-                同时公布参考答案与正确选项</label>
-              <button type="button" onClick={publishGrades} disabled={busy || (selected.scores_published && !includeAnswers)}>
-                {selected.scores_published ? "追加公布答案" : "公布成绩"}</button></div>
+          <header className="results-page-header">
+            <div><button className="back" onClick={() => setView("list")}><ArrowLeft size={15} />返回测评管理</button><div className="results-title"><h1>{selected.name}</h1><span className={`status-pill ${selected.scores_published ? "status-finished" : "status-ready"}`}>{selected.scores_published ? "成绩已公布" : "成绩未公布"}</span></div><p><span className="live-dot" />结果与申诉每 10 秒自动刷新</p></div>
+            <div className="results-publish-actions"><div className="header-actions"><a className="button secondary" href={`/api/admin/quizzes/${selected.id}/export`}><Download size={16} />导出 CSV</a>
+              <button type="button" onClick={publishGrades} disabled={busy || selected.scores_published}>
+                {selected.scores_published ? <Check size={16} /> : <BookOpenCheck size={16} />}{selected.scores_published ? "已公布成绩" : "公布成绩"}</button></div><p>{selected.scores_published ? "学生可查看成绩、参考答案与正确选项" : "公布成绩时，将同时公布参考答案与正确选项"}</p></div>
           </header>
           <section className="result-overview">
             <div><Users size={18} /><span>学生总数<strong>{results.length}</strong></span></div>
             <div><Check size={18} /><span>已完成<strong>{results.filter(result => !result.review_required && result.attempt_status?.toUpperCase() === "FINISHED").length}</strong></span></div>
             <div><BarChart3 size={18} /><span>已评分平均分<strong>{(() => { const values = results.flatMap(result => result.final_percent === null ? [] : [result.final_percent]); return values.length ? `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)}%` : "—"; })()}</strong></span></div>
+            <div><CircleAlert size={18} /><span>需关注学生<strong>{results.filter(result => resultBucket(result) === "attention").length}</strong></span></div>
           </section>
+          <AppealPanel appeals={appeals} studentFor={studentForAttempt} busy={busy}
+            onReview={appeal => { setResolvingAppeal(appeal.id); setAppealResolution(""); setAppealScore(""); setAppealError(""); }}
+            onViewAttempt={id => void loadAttempt(id)} />
           <section className="card table-card result-card">
+            <div className="results-table-heading"><h2>学生成绩</h2><span>按学生查看作答进度与评分结果</span></div>
             {results.length ? <><div className="result-toolbar"><label><Search size={15} /><input aria-label="搜索学号" value={resultQuery} onChange={event => setResultQuery(event.target.value)} placeholder="搜索学号" /></label><div className="filter-tabs" role="group" aria-label="筛选作答状态"><button className={resultFilter === "all" ? "active" : ""} onClick={() => setResultFilter("all")}>全部</button><button className={resultFilter === "finished" ? "active" : ""} onClick={() => setResultFilter("finished")}>已完成</button><button className={resultFilter === "active" ? "active" : ""} onClick={() => setResultFilter("active")}>进行中</button><button className={resultFilter === "pending" ? "active" : ""} onClick={() => setResultFilter("pending")}>未作答</button><button className={resultFilter === "attention" ? "active" : ""} onClick={() => setResultFilter("attention")}>需关注</button></div><span>{filteredResults.length} / {results.length} 人</span></div>{filteredResults.length ? <table className="result-table"><thead><tr><th>学号</th><th>覆盖题目</th><th>问题数</th><th>原始分</th><th>百分制</th><th>最低置信度</th><th>状态</th><th></th></tr></thead><tbody>{filteredResults.map(result => <tr key={result.student_number}><td className="mono student-number">{result.student_number}</td><td>{result.problem_count}</td><td>{result.question_count}</td><td><strong>{(result.review_required ? result.auto_score : result.final_score) ?? "—"}{result.max_score ? ` / ${result.max_score}` : ""}</strong>{result.review_required && <small>建议分 · 待复核</small>}{result.manual_score !== null && <small>人工覆盖</small>}</td><td><strong className="percent-score">{result.final_percent !== null ? `${result.final_percent.toFixed(1)}%` : "—"}</strong></td><td>{result.confidence?.toFixed(2) ?? "—"}</td><td><span className={`status-pill status-${statusClass(result.review_required ? "GRADING_ERROR" : result.attempt_status || result.participant_status)}`}>{statusLabel(result.review_required ? "REVIEW_REQUIRED" : result.attempt_status || result.participant_status)}</span>{result.quality_attention && <span className="status-pill quality-attention">题目质量需关注</span>}{result.timed_out && <small>超时自动交卷</small>}</td><td>{result.attempt_id && <button className="link" disabled={busy} onClick={() => void loadAttempt(result.attempt_id!)}>查看详情</button>}{(!result.attempt_id || result.attempt_status === "RESET") && result.prepared_problem_count > 0 && <button className="link" disabled={busy} onClick={() => void loadPrepared(result.student_number)}>{result.attempt_id ? "查看新题" : "查看详情"}</button>}</td></tr>)}</tbody></table> : <div className="filtered-empty">没有符合当前条件的学生</div>}</> : <div className="empty-state compact-empty"><div className="empty-symbol"><Users size={25} /></div><h2>暂时没有作答记录</h2><p>学生进入并开始测评后，进度会自动显示在这里。</p></div>}
-          </section>
-          <section className="card appeal-list">
-            <h2>待处理申诉 · {appeals.filter(a => a.state === "pending").length}</h2>
-            {appeals.filter(a => a.state === "pending").map(a => <article key={a.id}>
-              <p><strong>{a.question_snapshot}</strong> · 申请时 {a.score_snapshot} / 2 分</p>
-              <p>学生答案：{a.answer_snapshot || "未作答"}</p><p>申请理由：{a.reason}</p>
-              <button type="button" onClick={() => { setResolvingAppeal(a.id); setAppealResolution(""); setAppealScore(""); }}>处理申诉</button>
-            </article>)}
           </section>
         </>}
 
@@ -925,17 +921,9 @@ export function AdminApp() {
         {editError && <div className="error" role="alert">{editError}</div>}
         <div className="inline-actions"><button type="button" className="secondary" disabled={busy} onClick={() => setEditingQuestion(null)}>取消</button><button disabled={busy}>{busy ? "正在保存…" : "保存修改"}</button></div>
       </form></div>}
-      {resolvingAppeal && <div className="question-edit-overlay"><section className="card question-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="appeal-title">
-        <h2 id="appeal-title">处理学生申诉</h2>
-        <p>维持原分时留空新分数；修改本题分数时填写 0–2。</p>
-        <label>面向学生的处理说明<textarea required value={appealResolution} maxLength={5000}
-          onChange={event => setAppealResolution(event.target.value)} /></label>
-        <label>新分数（可留空）<input type="number" min={0} max={2} value={appealScore}
-          onChange={event => setAppealScore(event.target.value)} /></label>
-        <div className="inline-actions"><button type="button" onClick={() => setResolvingAppeal(null)}>取消</button>
-          <button type="button" disabled={busy || !appealResolution.trim()} onClick={() => void resolveSelectedAppeal()}>
-            {busy ? "正在处理…" : "确认处理"}</button></div>
-      </section></div>}
+      {activeAppeal && <AppealReviewDialog appeal={activeAppeal} student={studentForAttempt(activeAppeal.attempt_id)}
+        resolution={appealResolution} score={appealScore} busy={busy} error={appealError} onResolution={setAppealResolution}
+        onScore={setAppealScore} onCancel={() => setResolvingAppeal(null)} onSubmit={() => void resolveSelectedAppeal()} />}
       {toast && <div className="toast" role="status"><Check size={17} />{toast}</div>}
       {confirm && <ConfirmDialog title={confirm.title} description={confirm.description} confirmLabel={confirm.confirmLabel} danger={confirm.danger} busy={busy} onCancel={() => setConfirm(null)} onConfirm={() => void runConfirmedAction()} />}
     </div>

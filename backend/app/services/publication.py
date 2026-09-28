@@ -31,7 +31,9 @@ async def current_attempt(db, participant_id) -> Attempt | None:
     return attempt if attempt and attempt.status != AttemptStatus.RESET else None
 
 
-async def publish(db, quiz_id: uuid.UUID, actor: str, *, include_answers: bool = False) -> dict:
+async def publish(db, quiz_id: uuid.UUID, actor: str, *, include_answers: bool = True) -> dict:
+    # Accept the legacy argument, but publication now always includes answers.
+    include_answers = True
     await db.execute(select(GenerationControl).where(GenerationControl.id == 1).with_for_update())
     participants = (await db.scalars(select(QuizParticipant).where(QuizParticipant.quiz_id == quiz_id)
         .order_by(QuizParticipant.id).with_for_update())).all()
@@ -152,9 +154,9 @@ async def student_result(db, quiz_id: uuid.UUID, student_number: str) -> dict:
             appeals=[dict(id=str(a.id), state=a.state, reason=a.reason, resolution=a.resolution,
                 question_score_version=a.question_score_version)
                 for a in by_question.get(q.id, [])])
-        if quiz.publish_answers:
-            item["reference_answer"] = q.reference_answer
-            item["correct_choice_id"] = q.correct_choice_id
+        # Applies to previously published quizzes too, without rewriting history.
+        item["reference_answer"] = q.reference_answer
+        item["correct_choice_id"] = q.correct_choice_id
         questions.append(item)
     return {"published": True, "participated": True, "assessment_version": attempt.assessment_version,
         "submitted_at": attempt.submitted_at or (ensure_utc(attempt.deadline_at) if attempt.timed_out else

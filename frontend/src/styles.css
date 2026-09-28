@@ -644,7 +644,7 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .lightweight-conflict { padding: .8rem; border: 1px solid #e9a23b; border-radius: .5rem; background: #fff9ed; }
 .lightweight-conflict button { margin-right: .5rem; }
 .result-page { align-items: flex-start; padding: 2rem 1rem; }
-.result-card { width: min(100%, 62rem); }
+.result-page > .result-card { width: min(100%, 62rem); }
 .result-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .result-header div { display: flex; gap: .5rem; }
 .result-total { font-size: 1.2rem; }
@@ -654,6 +654,98 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .result-options { padding-left: 1.4rem; }
 .appeal-form { display: grid; gap: .5rem; margin-top: .75rem; }
 .appeal-form textarea { width: 100%; min-height: 6rem; }
+
+/* Teacher results have their own layout; student result cards stay compact. */
+body:has(.admin-results) { min-width: 360px; }
+.admin-main.admin-results { max-width: 1800px; }
+.results-title { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.results-title h1 { margin: 0; }
+.results-publish-actions { text-align: right; flex-shrink: 0; }
+.admin-main .results-publish-actions p { font-size: 12px; margin: 10px 0 0; }
+.admin-results .result-overview { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 24px; }
+.admin-results .result-overview > div { min-width: 0; padding: 22px 24px; }
+.admin-results .result-overview > div > svg { width: 40px; height: 40px; padding: 10px; border-radius: 12px; background: var(--green-50); }
+.admin-results .result-overview strong { font-size: 27px; font-variant-numeric: tabular-nums; }
+.admin-results .result-card { width: 100%; overflow-x: auto; }
+.results-table-heading { display: flex; align-items: baseline; gap: 12px; padding: 20px 22px 0; }
+.results-table-heading h2, .appeals-heading h2 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
+.results-table-heading > span { color: var(--muted); font-size: 12px; }
+.admin-results .result-toolbar { padding: 16px 22px 20px; }
+.admin-results .result-table { min-width: 760px; }
+.admin-results .result-table th, .admin-results .result-table td { padding-inline: 20px; }
+.admin-results .result-table td { padding-block: 16px; }
+.admin-results .result-table tbody tr:hover { background: #f7faf8; }
+.admin-results .result-table td:last-child { white-space: nowrap; }
+.admin-results .filter-tabs button { min-height: 32px; }
+.appeals-panel { margin-bottom: 24px; padding: 22px; }
+.appeals-heading, .appeal-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.section-title { display: flex; align-items: center; gap: 12px; }
+.section-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border-radius: 12px; color: var(--green-700); background: var(--green-50); }
+.appeals-heading h2 { display: flex; align-items: center; gap: 9px; }
+.appeals-heading p, .appeals-empty p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.count-badge { display: inline-grid; place-items: center; min-width: 23px; height: 23px; padding-inline: 6px; border-radius: 7px; background: #edf2ef; color: var(--muted); font-size: 12px; }
+.count-badge.has-pending, .appeal-pending { background: #fff5df; color: #8b611b; border-color: #ebd5a6; }
+.appeals-summary { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.appeals-empty { display: flex; align-items: center; gap: 12px; margin-top: 18px; padding: 17px 20px; background: #f6f9f7; border: 1px dashed #d5e2da; border-radius: 10px; }
+.appeals-empty > span { color: #56856c; display: flex; }
+.appeals-empty strong { font-size: 13px; font-weight: 650; }
+.appeals-panel-empty { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.appeals-panel-empty .appeals-heading { flex: 1; }
+.appeals-panel-empty .appeals-empty { margin: 0; padding: 0; border: 0; background: transparent; flex-shrink: 0; }
+.appeals-panel-empty .appeals-empty p { display: none; }
+.appeals-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
+.appeal-item { display: flex; flex-direction: column; min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: #fcfdfc; }
+.appeal-item:only-child { grid-column: 1 / -1; }
+.appeal-item-heading strong { font-size: 14px; }
+.appeal-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; font-size: 11px; color: var(--muted); }
+.appeal-meta strong { color: var(--ink); font-weight: 600; }
+.appeal-reason { margin-bottom: 12px; padding: 12px 14px; border-left: 3px solid #bdd3c6; border-radius: 0 6px 6px 0; background: #f0f5f2; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.appeal-context { font-size: 13px; overflow-wrap: anywhere; }
+.appeal-context summary { cursor: pointer; color: var(--green-700); padding: 7px 0; font-weight: 600; }
+.appeal-context > div { padding: 12px 0; }
+.field-caption { display: block; margin-bottom: 6px; font-size: 11px; font-weight: 650; color: var(--muted); }
+.preserve-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.appeal-item-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: auto; padding-top: 16px; }
+.appeal-item-actions .secondary { min-height: 34px; padding: 6px 12px; font-size: 12px; }
+.appeal-review-dialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.appeal-dialog-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 24px 26px 18px; border-bottom: 1px solid var(--line); }
+.appeal-dialog-heading h2 { margin: 0 0 8px; font-size: 20px; }
+.appeal-dialog-heading p { display: flex; flex-wrap: wrap; gap: 14px; margin: 0; font-size: 12px; color: var(--muted); }
+.appeal-dialog-body { overflow-y: auto; padding: 22px 26px; }
+.appeal-review-context { border: 1px solid var(--line); padding: 16px; border-radius: 10px; background: #f7faf8; margin-bottom: 20px; }
+.appeal-review-context > p { margin-bottom: 8px; }
+.appeal-dialog-body label { margin-top: 16px; font-size: 13px; }
+.appeal-dialog-body textarea { min-height: 120px; resize: vertical; }
+.appeal-dialog-body select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--ink); font: inherit; }
+.appeal-dialog-body select:focus-visible { outline: 3px solid #79ad95; outline-offset: 2px; }
+.appeal-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 18px 26px; border-top: 1px solid var(--line); background: #fafcfb; }
+@media (max-width: 1150px) {
+  .admin-results .results-page-header { align-items: flex-start; flex-direction: column; gap: 18px; }
+  .results-publish-actions { width: 100%; text-align: left; }
+  .results-publish-actions .header-actions { justify-content: flex-start; }
+  .admin-results .result-overview > div { padding: 18px 14px; gap: 10px; }
+  .appeals-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .admin-shell:has(.admin-results) { display: block; }
+  .admin-shell:has(.admin-results) > aside { position: static; height: auto; padding: 16px 20px; }
+  .admin-shell:has(.admin-results) nav { display: flex; margin-top: 12px; gap: 8px; }
+  .admin-shell:has(.admin-results) .admin-aside-footer { display: none; }
+  .admin-main.admin-results { padding: 24px 16px 40px; }
+  .admin-results .result-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-results .result-overview > div { padding: 16px; }
+  .admin-results .result-overview strong { font-size: 24px; }
+  .admin-results .results-title h1 { font-size: 25px; }
+  .appeals-panel { padding: 18px 16px; }
+  .appeals-panel-empty { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .appeals-heading { align-items: flex-start; }
+  .appeals-heading p { max-width: 240px; }
+  .appeals-summary { display: none; }
+  .results-table-heading { flex-direction: column; gap: 4px; padding-inline: 16px; }
+  .admin-results .result-toolbar { padding-inline: 16px; }
+  .admin-results .filter-tabs { flex-wrap: wrap; }
+  .appeal-dialog-heading, .appeal-dialog-body, .appeal-dialog-actions { padding: 18px; }
+}
 @media (max-width: 760px) {
   .lightweight-nav { overflow-x: auto; flex-wrap: nowrap; }
   .lightweight-nav button { flex: 0 0 auto; }

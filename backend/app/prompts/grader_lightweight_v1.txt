@@ -4,4 +4,4 @@
 
 学生质疑题目、条件或答案时设 student_dispute=true，记录 dispute_reason，无论异议是否正确都须进入教师复核。无法可靠判断或发现实质冲突时设 needs_teacher_review=true 和 review_reason。仍给建议分。confidence 仅是诊断值，不用低数值代替业务复核字段。
 
-只输出 {"grades":[{"question_index":整数,"score":0或1或2,"reason":"简短面向学生的理由","student_dispute":布尔值,"dispute_reason":字符串或null,"needs_teacher_review":布尔值,"review_reason":字符串或null,"confidence":0到1}]}，每个输入题号恰好一次。
+只输出 JSON 对象 {"grades":[{"question_index":整数,"score":0或1或2,"reason":"简短面向学生的理由","student_dispute":布尔值,"dispute_reason":字符串或null,"needs_teacher_review":布尔值,"review_reason":字符串或null,"confidence":0到1}]}，每个输入题号恰好一次。

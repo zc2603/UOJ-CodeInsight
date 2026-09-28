@@ -144,8 +144,24 @@ class RegressionStop(RuntimeError):
 
 
 class RequestGuard:
-    def __init__(self, report, save):
+    def __init__(self, report, save, *, max_requests=MAX_REQUESTS,
+        prior_requests=PRIOR_REQUESTS, cumulative_http_cap=MAX_CUMULATIVE_REQUESTS,
+        prior_estimated_cny=PRIOR_ESTIMATED_CNY, max_tokens=MAX_TOKENS,
+        max_body_bytes=MAX_BODY_BYTES, max_cny=MAX_CNY,
+        input_cny_per_m=INPUT_CNY_PER_M, output_cny_per_m=OUTPUT_CNY_PER_M):
         self.report, self.save = report, save
+        self.max_requests = max_requests
+        self.prior_requests = prior_requests
+        self.cumulative_http_cap = cumulative_http_cap
+        self.prior_estimated_cny = prior_estimated_cny
+        self.max_tokens = max_tokens
+        self.max_body_bytes = max_body_bytes
+        self.max_cny = max_cny
+        self.input_cny_per_m = input_cny_per_m
+        self.output_cny_per_m = output_cny_per_m
+        self.reserve_per_request = (
+            (max_body_bytes + 1024) * input_cny_per_m + max_tokens * output_cny_per_m
+        ) / 1_000_000
         self.lock = asyncio.Lock()
         self.schema = None
         self.consecutive_structure_errors = 0
@@ -154,20 +170,20 @@ class RequestGuard:
         async with self.lock:
             body = json.loads(request.content)
             if (request.url.host != "api.deepseek.com" or request.url.scheme != "https"
-                or body.get("model") != "deepseek-flash" or body.get("max_tokens") != MAX_TOKENS
-                or len(request.content) > MAX_BODY_BYTES):
+                or body.get("model") != "deepseek-flash" or body.get("max_tokens") != self.max_tokens
+                or len(request.content) > self.max_body_bytes):
                 raise RegressionStop("Request outside approved model, endpoint or size")
-            if (self.report["http_requests"] >= MAX_REQUESTS
-                or PRIOR_REQUESTS + self.report["http_requests"] >= MAX_CUMULATIVE_REQUESTS):
+            if (self.report["http_requests"] >= self.max_requests
+                or self.prior_requests + self.report["http_requests"] >= self.cumulative_http_cap):
                 raise RegressionStop("HTTP request cap reached")
-            if (PRIOR_ESTIMATED_CNY + self.report["reserved_peak_cny"] + RESERVE_PER_REQUEST
-                > MAX_CNY):
+            if (self.prior_estimated_cny + self.report["reserved_peak_cny"] + self.reserve_per_request
+                > self.max_cny):
                 raise RegressionStop("Cost cap reached")
             self.report["http_requests"] += 1
-            self.report["reserved_peak_cny"] += RESERVE_PER_REQUEST
+            self.report["reserved_peak_cny"] += self.reserve_per_request
             self.report["requests"].append(dict(index=self.report["http_requests"],
                 business_case=self.report.get("active_case"), input_bytes=len(request.content),
-                reserved_peak_cny=RESERVE_PER_REQUEST, sent_at=time.time()))
+                reserved_peak_cny=self.reserve_per_request, sent_at=time.time()))
             # Durable reservation is written before dispatch, including retries.
             self.save()
 
@@ -186,11 +202,11 @@ class RequestGuard:
                 record["provider_error"] = safe_error
         record["usage"] = body.get("usage", {}) if isinstance(body, dict) else {}
         usage = record["usage"] or {}
-        record["estimated_peak_cny"] = (usage.get("prompt_tokens", 0) * INPUT_CNY_PER_M
-            + usage.get("completion_tokens", 0) * OUTPUT_CNY_PER_M) / 1_000_000
+        record["estimated_peak_cny"] = (usage.get("prompt_tokens", 0) * self.input_cny_per_m
+            + usage.get("completion_tokens", 0) * self.output_cny_per_m) / 1_000_000
         self.report["estimated_peak_cny"] = sum(r.get("estimated_peak_cny", 0) for r in self.report["requests"])
         self.report["cumulative_estimated_peak_cny"] = (
-            PRIOR_ESTIMATED_CNY + self.report["estimated_peak_cny"])
+            self.prior_estimated_cny + self.report["estimated_peak_cny"])
         if response.status_code in (401, 402, 403):
             self.save()
             raise RegressionStop("Authentication or billing failure")
@@ -207,7 +223,7 @@ class RequestGuard:
         self.save()
         if self.consecutive_structure_errors >= 2:
             raise RegressionStop("Two consecutive structure errors")
-        if self.report["cumulative_estimated_peak_cny"] >= MAX_CNY:
+        if self.report["cumulative_estimated_peak_cny"] >= self.max_cny:
             raise RegressionStop("Actual estimated cost cap reached")
 
 

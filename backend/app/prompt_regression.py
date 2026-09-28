@@ -125,6 +125,6 @@ async def run(output: Path, real: bool):
 
 if __name__ == "__main__":
     # Retain the legacy v4 functions above for audit. The installed whitelist
-    # entry point now dispatches the explicitly authorized review regression.
-    from app.prompt_pro_regression import main
+    # entry point dispatches the bounded, explicitly approved lightweight run.
+    from app.lightweight_regression import main
     main()

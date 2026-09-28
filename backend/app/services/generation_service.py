@@ -11,7 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
 from app.models import Attempt, AttemptStatus, QuizParticipant, GenerationControl, GenerationJob, GenerationRun, Quiz, QuizStatus, SubmissionSnapshot, QuizProblemSnapshot
-from app.services.llm_provider import GENERATOR_VERSION, LIGHTWEIGHT_GENERATOR_VERSION
+from app.services.llm_provider import GENERATOR_VERSION, LIGHTWEIGHT_GENERATOR_VERSION, LIGHTWEIGHT_GENERATOR_VERSIONS
 from app.services.question_policy import allocated_kind
 from app.time_utils import ensure_utc
 
@@ -262,7 +262,7 @@ async def finish(db, settings, identity, *, result=None, raw=None, error=None):
         job.state = "succeeded"
         job.result_json = result.model_dump(mode="json")
         job.raw_response = raw
-        if settings.quality_audit_enabled and job.prompt_version != LIGHTWEIGHT_GENERATOR_VERSION:
+        if settings.quality_audit_enabled and job.prompt_version not in LIGHTWEIGHT_GENERATOR_VERSIONS:
             job.quality_state = "queued"
     await db.commit()
     return True
@@ -291,8 +291,10 @@ async def run_claim(factory, settings, provider, identity):
                 .options(selectinload(SubmissionSnapshot.problem)))).scalar_one()
             payload = dict(title=snapshot.problem.title, statement=snapshot.problem.statement,
                 language=snapshot.language, source_code=snapshot.source_code,
-                second_question_kind=job.second_kind if job.prompt_version == LIGHTWEIGHT_GENERATOR_VERSION else await allocated_kind(db, snapshot))
-            lightweight = job.prompt_version == LIGHTWEIGHT_GENERATOR_VERSION
+                second_question_kind=job.second_kind if job.prompt_version in LIGHTWEIGHT_GENERATOR_VERSIONS else await allocated_kind(db, snapshot))
+            lightweight = job.prompt_version in LIGHTWEIGHT_GENERATOR_VERSIONS
+            if lightweight:
+                payload["prompt_version"] = job.prompt_version
         call = provider.generate_lightweight if lightweight else provider.generate_questions
         return await asyncio.wait_for(call(**payload), settings.generation_task_timeout_seconds)
 

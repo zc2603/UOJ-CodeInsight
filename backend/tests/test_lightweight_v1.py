@@ -114,12 +114,14 @@ async def test_fixed_duration_and_invalid_choice_configuration(db):
 
 
 @pytest.mark.asyncio
-async def test_new_protocol_never_enters_legacy_quality_audit(db, monkeypatch):
+@pytest.mark.parametrize("version", ["question_generator_lightweight_v1", "question_generator_lightweight_v2"])
+async def test_new_protocol_never_enters_legacy_quality_audit(db, monkeypatch, version):
     monkeypatch.setenv("QUALITY_AUDIT_ENABLED", "true")
     get_settings.cache_clear()
     quiz = await prepared_quiz(db)
     jobs = (await db.scalars(select(GenerationJob).where(GenerationJob.quiz_id == quiz.id))).all()
     assert jobs and all(job.quality_state != "queued" for job in jobs)
+    jobs[0].prompt_version = version
     jobs[0].quality_state = "queued"  # Even a stale/manual state must not be claimed.
     await db.commit()
     assert await claim_quality(db) is None

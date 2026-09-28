@@ -16,7 +16,8 @@ from app.schemas.llm import GradingResult, GradingAssessmentResult, QuestionGene
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 GENERATOR_VERSION = "question_generator_v20"
 GRADER_VERSION = "grader_v11"
-LIGHTWEIGHT_GENERATOR_VERSION = "question_generator_lightweight_v1"
+LIGHTWEIGHT_GENERATOR_VERSION = "question_generator_lightweight_v2"
+LIGHTWEIGHT_GENERATOR_VERSIONS = ("question_generator_lightweight_v1", LIGHTWEIGHT_GENERATOR_VERSION)
 LIGHTWEIGHT_GRADER_VERSION = "grader_lightweight_v1"
 
 
@@ -323,10 +324,13 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         return await self._request_json(system, user, schema)
 
     async def generate_lightweight(self, *, title: str, statement: str, language: str,
-        source_code: str, second_question_kind: str | None) -> tuple[LightweightGenerationResult, str]:
-        system = (PROMPTS / f"{LIGHTWEIGHT_GENERATOR_VERSION}.txt").read_text(encoding="utf-8")
+        source_code: str, second_question_kind: str | None,
+        prompt_version: str = LIGHTWEIGHT_GENERATOR_VERSION) -> tuple[LightweightGenerationResult, str]:
+        if prompt_version not in LIGHTWEIGHT_GENERATOR_VERSIONS:
+            raise ValueError("Unsupported lightweight generator version")
+        system = (PROMPTS / f"{prompt_version}.txt").read_text(encoding="utf-8")
         if second_question_kind:
-            system += f"\n本次第二问的认知类型必须是 {second_question_kind}；不能换题型。"
+            system += f'\n本次第二问必须填写 type="{second_question_kind}"，response_format="single_choice"；不能换题型。'
         else:
             system += "\n本次仅生成第一道简答题。"
         user = (f"标题：{encode_untrusted(title)}\n题面：{encode_untrusted(statement)}\n"

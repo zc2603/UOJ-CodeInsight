@@ -7,6 +7,7 @@ import pytest
 from app.config import Settings
 from app import lightweight_regression as runner
 from app.schemas.llm import LightweightGenerationResult
+from app.services.llm_provider import LLMProviderError
 
 
 def guard_report():
@@ -59,6 +60,96 @@ async def test_auth_and_two_schema_failures_stop_provider_retries(status, body, 
         assert report["http_requests"] == expected
     finally:
         await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_http_errors_save_only_redacted_bounded_provider_metadata():
+    report = guard_report()
+    guard = runner.RequestGuard(report, lambda: None)
+    req = request()
+    await guard.before(req)
+    response = httpx.Response(400, request=req, json={"error": {
+        "type": "invalid_request_error", "code": "bad_parameter",
+        "message": "Authorization: Bearer local-test-secret-token; api_key=sk-0123456789abcdef0123456789 " + "x" * 400,
+        "debug_request": "should never be saved",
+    }})
+
+    await guard.after(response)
+
+    record = report["requests"][0]
+    assert record["status"] == 400
+    assert record["provider_error"]["type"] == "invalid_request_error"
+    assert record["provider_error"]["code"] == "bad_parameter"
+    assert len(record["provider_error"]["message"]) <= runner.MAX_ERROR_TEXT_CHARS
+    serialized = json.dumps(record, ensure_ascii=False)
+    assert "local-test-secret-token" not in serialized
+    assert "sk-0123456789abcdef0123456789" not in serialized
+    assert "should never be saved" not in serialized
+    assert "raw_response" not in record and "body" not in record
+
+
+@pytest.mark.asyncio
+async def test_http_400_retry_metadata_is_saved_for_each_request(monkeypatch):
+    async def no_wait(_seconds):
+        return None
+    monkeypatch.setattr("app.services.llm_provider.asyncio.sleep", no_wait)
+    report = guard_report()
+    body = {"error": {"type": "invalid_request_error", "code": "unsupported_field",
+        "message": "field rejected; api_key=sk-0123456789abcdef0123456789"}}
+    TransportProvider.handler = lambda req: httpx.Response(400, request=req, json=body)
+    provider = TransportProvider(Settings(_env_file=None, llm_max_tokens=runner.MAX_TOKENS),
+        runner.RequestGuard(report, lambda: None))
+    try:
+        with pytest.raises(LLMProviderError):
+            await provider._request_json("synthetic system", "synthetic user", LightweightGenerationResult)
+        assert report["http_requests"] == 3
+        assert [item["status"] for item in report["requests"]] == [400, 400, 400]
+        assert all(item["provider_error"]["code"] == "unsupported_field" for item in report["requests"])
+        assert all("sk-0123456789abcdef0123456789" not in json.dumps(item) for item in report["requests"])
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_and_grading_share_the_same_request_envelope():
+    captured = []
+    generation_content = {"schema_version": "lightweight_v1", "questions": [{
+        "index": 1, "type": "explanation", "response_format": "short_answer",
+        "question": "合成问题", "question_en": "Synthetic question",
+        "reference_answer": "合成答案", "core_idea": "合成机制",
+    }]}
+    grading_content = {"grades": [{"question_index": 1, "score": 2, "reason": "回答正确",
+        "student_dispute": False, "needs_teacher_review": False, "confidence": 0.99}]}
+    def handler(req):
+        payload = json.loads(req.content)
+        captured.append((req.url, payload))
+        content = grading_content if "待评分简答题" in payload["messages"][1]["content"] else generation_content
+        return httpx.Response(200, request=req, json={"choices": [{"finish_reason": "stop",
+            "message": {"content": json.dumps(content, ensure_ascii=False)}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 100}})
+    TransportProvider.handler = handler
+    settings = Settings(_env_file=None, llm_provider="openai-compatible", llm_model="deepseek-flash",
+        llm_max_tokens=runner.MAX_TOKENS)
+    provider = TransportProvider(settings, runner.RequestGuard(guard_report(), lambda: None))
+    try:
+        await provider.generate_lightweight(title="合成题", statement="合成题面", language="C++",
+            source_code="int main() {}", second_question_kind=None)
+        await provider.grade_lightweight(title="合成题", statement="合成题面", language="C++",
+            source_code="int main() {}", question_payload=[{"question_index": 1, "question": "为什么？",
+                "question_en": "Why?", "student_answer": "因为这是合成答案。"}])
+    finally:
+        await provider.close()
+
+    assert len(captured) == 2
+    assert captured[0][0] == captured[1][0]
+    generation_request, grading_request = (item[1] for item in captured)
+    assert set(generation_request) == set(grading_request) == {
+        "model", "messages", "thinking", "reasoning_effort", "max_tokens", "response_format",
+    }
+    for field in ("model", "thinking", "reasoning_effort", "max_tokens", "response_format"):
+        assert generation_request[field] == grading_request[field]
+    assert generation_request["max_tokens"] == runner.MAX_TOKENS == 100000
+    assert generation_request["messages"] != grading_request["messages"]
 
 
 @pytest.mark.asyncio

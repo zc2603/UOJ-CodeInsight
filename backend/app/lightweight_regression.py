@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -33,6 +34,44 @@ INPUT_CNY_PER_M = 2
 OUTPUT_CNY_PER_M = 8
 PRICE_SOURCE = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
 RESERVE_PER_REQUEST = ((MAX_BODY_BYTES + 1024) * INPUT_CNY_PER_M + MAX_TOKENS * OUTPUT_CNY_PER_M) / 1_000_000
+MAX_ERROR_BODY_BYTES = 8192
+MAX_ERROR_TEXT_CHARS = 240
+_ERROR_SECRET_PATTERNS = (
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)\b(?:sk|ds)-[A-Za-z0-9._-]{12,}\b"),
+    re.compile(r"(?i)(api[_ -]?key|authorization)\s*[:=]\s*[^\s,;]+"),
+)
+
+
+def _safe_error_text(value, *, limit=MAX_ERROR_TEXT_CHARS):
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, int) and not isinstance(value, bool):
+        text = str(value)
+    else:
+        return None
+    for pattern in _ERROR_SECRET_PATTERNS:
+        text = pattern.sub(lambda match: "[REDACTED]" if "=" not in match.group(0) and ":" not in match.group(0)
+            else match.group(1) + "=[REDACTED]", text)
+    text = " ".join("".join(" " if ord(char) < 32 or ord(char) == 127 else char for char in text).split())
+    return text[:limit] or None
+
+
+def sanitized_provider_error(body):
+    """Return only bounded, allow-listed error metadata; never persist raw error bodies."""
+    if not isinstance(body, dict):
+        return {}
+    error = body.get("error", body)
+    if isinstance(error, str):
+        error = {"message": error}
+    if not isinstance(error, dict):
+        return {}
+    safe = {}
+    for field, limit in (("code", 80), ("type", 80), ("message", MAX_ERROR_TEXT_CHARS)):
+        value = _safe_error_text(error.get(field), limit=limit)
+        if value is not None:
+            safe[field] = value
+    return safe
 
 CASES = [
     dict(name="loop_short_circuit", kind="trace", title="首个正数", statement="输入 n（1≤n≤6）及 n 个整数（−9≤a[i]≤9）。输出第一个正数的下标（从0开始）；不存在时输出−1。", source='''#include <iostream>
@@ -138,9 +177,13 @@ class RequestGuard:
         record["status"] = response.status_code
         record["elapsed_seconds"] = time.time() - record["sent_at"]
         try:
-            body = response.json()
+            body = response.json() if response.is_success else json.loads(response.content[:MAX_ERROR_BODY_BYTES])
         except ValueError:
             body = {}
+        if not response.is_success:
+            safe_error = sanitized_provider_error(body)
+            if safe_error:
+                record["provider_error"] = safe_error
         record["usage"] = body.get("usage", {}) if isinstance(body, dict) else {}
         usage = record["usage"] or {}
         record["estimated_peak_cny"] = (usage.get("prompt_tokens", 0) * INPUT_CNY_PER_M

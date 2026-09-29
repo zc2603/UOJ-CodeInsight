@@ -16,7 +16,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     let message = `请求失败（${response.status}）`;
     try {
       const body = await response.json();
-      message = body.detail || message;
+      message = typeof body.detail === "string" ? body.detail : Array.isArray(body.detail)
+        ? body.detail.map((issue: { loc?: string[]; msg?: string }) => `${issue.loc?.slice(1).join(".") || "输入"}：${issue.msg || "格式不正确"}`).join("；")
+        : message;
     } catch {
       // Keep the generic message for non-JSON errors.
     }

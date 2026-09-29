@@ -28,10 +28,13 @@ function fixture() {
         assessment_version:'lightweight_v1',scores_published:false,status:'DRAFT',participant_count:1,finished_count:0,average_score:null,
         start_time:'2026-09-29T01:00:00Z',end_time:'2026-09-29T02:00:00Z'}]};
 }
+const settingsDefaults = { entry_minutes:30,reopen_minutes:null,time_mode:'per_question',minutes_per_question:4,fixed_minutes:25,
+  question_template:'standard',grade_bands:[{label:'A+',minimum:9},{label:'A',minimum:7},{label:'B+',minimum:5},{label:'B',minimum:3},{label:'C',minimum:1},{label:'D',minimum:0}],
+  result_filter:'all',result_sort:'student',result_columns:['score','grade','confidence','timeout'],code_font_size:13,code_wrap:false,english_expanded:true };
 function resultData(f) {
   if(f.resultMode==='waiting') return {published:false};
   if(f.resultMode==='absent') return {published:true,participated:false};
-  return {published:true,participated:true,score:f.score ?? 5,max_score:f.maxScore ?? 6,percent:83.333,submitted_at:'2026-09-29T01:35:00Z',submission_source:'manual',
+  return {published:true,participated:true,grade:settingsDefaults.grade_bands.find(b=>(f.score??5)>=b.minimum).label,score:f.score ?? 5,max_score:f.maxScore ?? 6,percent:83.333,submitted_at:'2026-09-29T01:35:00Z',submission_source:'manual',
     questions:f.questions.map((q,i)=>({...q,answer_text:i===1?'':'每次把当前读到的数加进去，所以它保存了前面所有数的和。',
       choice_id:i===1?'B':null,score:i===2?1:2,reason:'回答已说明累加更新的作用，体现了对局部状态的理解。',
       reference_answer:'每次读入一个数 $a_i$，执行 `sum += a_i`，使 `sum` 保持为已读入数值的总和。',
@@ -86,11 +89,20 @@ async function wire(page,f,errors) {
       data=f.quizzes;
     } else if(p==='/api/admin/overview') data={student_count:3};
     else if(p==='/api/admin/features') data={lightweight_creation_enabled:true,quality_audit_enabled:false};
+    else if(p==='/api/admin/settings') {
+      if(req.method()==='PUT') {
+        const body=req.postDataJSON();
+        if(body.expected_revision!==(f.settingsRevision||0)) return route.fulfill({status:409,json:{detail:'设置已在其他页面更新，请重新加载后再保存'}});
+        f.settings=body.settings;f.settingsRevision=(f.settingsRevision||0)+1;
+      }
+      data={settings:f.settings||settingsDefaults,revision:f.settingsRevision||0,defaults:settingsDefaults};
+    }
     else if(p.endsWith('/preview-contest')) data={contest_name:'合成课堂测评',submission_cutoff:'2026-09-28T01:00:00Z',cutoff_reached:true,
       problems:[101,102,103].map((id,i)=>({problem_id:id,display_order:i+1,title:`第 ${i+1} 题 · 合成状态更新`,include_choice:i<2})),
       numeric_student_accounts:3,students_with_eligible_problem:3,selected_submission_snapshots:8,parser_errors:[],roster:null};
     else if(p.endsWith('/results')) data=[1,2,3,4,5].map((i)=>({student_number:`20990000${i}`,participant_status:'READY',attempt_id:i===3?null:'attempt-'+i,
       attempt_status:i===3?null:i===5?'GRADING':'FINISHED',problem_count:2,question_count:3,auto_score:i===3?null:i===2?0:6,manual_score:null,final_score:i===3?null:i===2?0:6,
+      grade:i===1?'B+':i===2?'D':null,completed_at:i<3?'2026-09-29T01:35:00Z':null,
       max_score:6,final_percent:i===3?null:i===2?0:100,confidence:.95,review_required:i===4,timed_out:false,prepared_problem_count:2,preparation_total:2}));
     else if(p.endsWith('/appeals')) data=[{id:'teacher-appeal',attempt_id:'attempt-1',question_id:'question-1',state:'pending',
       reason:'我用自己的话说明了更新作用，希望老师再核对一下。',score_snapshot:1,question_snapshot:f.questions[0].question,
@@ -191,14 +203,43 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'登录管理端'}).click();await page.getByRole('heading',{name:'全部测评'}).waitFor();
       assert.equal(await page.locator('.quiz-table tbody tr').first().locator('td').nth(4).textContent(),'3.0 分');
       await capture(page,'teacher-list',size);
+      await page.getByRole('button',{name:'设置',exact:true}).click();
+      await page.getByRole('heading',{name:'测评默认值',exact:true}).waitFor();
+      assert.equal(await page.getByLabel('每问折算分钟数').inputValue(),'4');
+      await capture(page,'teacher-account-settings',size);
+      await page.getByLabel('首次开放进入窗口（分钟）').fill('45');
+      await page.getByRole('button',{name:'保存本组',exact:true}).nth(0).click();
+      await page.getByRole('status').filter({hasText:'本组设置已保存'}).waitFor();
+      assert.equal(f.settings.entry_minutes,45);
+      await page.getByLabel('代码自动换行').check();
+      await page.getByLabel('英文对照默认展开').uncheck();
+      await page.getByLabel('代码字号',{exact:true}).fill('16');
+      await page.getByLabel('完成时间',{exact:true}).check();
+      await page.getByLabel('最低置信度',{exact:true}).uncheck();
+      await page.getByRole('button',{name:'保存本组',exact:true}).nth(2).click();
+      await page.getByRole('status').filter({hasText:'本组设置已保存'}).waitFor();
+      assert.equal(f.settings.code_wrap,true);
+      assert.equal(await page.locator('.wrapped-code-line').count(),4);
+      await capture(page,'teacher-settings-wrapped',size);
+      // Simulate another tab saving, then verify a stale write stays an error.
+      f.settingsRevision++;
+      await page.getByRole('button',{name:'保存本组',exact:true}).nth(0).click();
+      await page.getByRole('alert').filter({hasText:'设置已在其他页面更新'}).waitFor();
+      await page.getByRole('button',{name:'重新加载',exact:true}).click();
+      await page.waitForFunction(()=>!document.querySelector('[role="alert"]'));
+      assert.equal(await page.getByLabel('首次开放进入窗口（分钟）').inputValue(),'45');
       await page.getByRole('button',{name:'创建测评',exact:true}).first().click();await page.getByRole('heading',{name:'导入比赛'}).waitFor();
       await page.getByLabel('Contest ID').fill('7');await page.getByRole('button',{name:'导入并预览'}).click();await page.getByText('最多 5 问 · 3 道简答 + 2 道单选').waitFor();
       await capture(page,'teacher-create',size);await page.locator('.assessment-disclosure').nth(1).locator('summary').click();
+      assert.equal(await page.locator('.assessment-minute-field input').inputValue(),'4');
+      await page.getByText('进入窗口：45 分钟 · 重新开放：45 分钟 · 调整',{exact:true}).waitFor();
       await page.getByRole('button',{name:'固定总时长'}).click();await page.locator('.assessment-minute-field input').fill('30');
       await capture(page,'teacher-settings',size);
       await page.getByRole('button',{name:'测评管理',exact:true}).click();await page.locator('.quiz-table').getByRole('button',{name:'查看结果'}).first().click();
       await page.getByRole('heading',{name:'学生成绩',exact:true}).waitFor();
       assert.equal(await page.getByRole('columnheader',{name:'等级',exact:true}).count(),1);
+      assert.equal(await page.getByRole('columnheader',{name:'完成时间',exact:true}).count(),1);
+      assert.equal(await page.getByRole('columnheader',{name:'最低置信度',exact:true}).count(),0);
       assert.equal(await page.getByRole('columnheader',{name:'百分制',exact:true}).count(),0);
       assert.deepEqual(await page.locator('.result-table .grade-score').allTextContents(),['B+','D','—','—','—']);
       assert.equal(await page.locator('.result-overview > div').nth(2).locator('strong').textContent(),'3.0 分');
@@ -207,6 +248,8 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'处理申诉'}).click();await focusTrap(page);await capture(page,'teacher-appeal-dialog',size);await page.keyboard.press('Escape');
       await page.getByRole('button',{name:'完整作答'}).click();await page.getByRole('heading',{name:'逐题成绩',exact:true}).waitFor();
       await page.locator('.material-details summary').first().click();await capture(page,'teacher-attempt',size);
+      assert.equal(await page.locator('.material-details').first().locator('.wrapped-code-line').count(),100);
+      assert.equal(await page.locator('.english-details[open]').count(),0);
       await page.getByRole('button',{name:'返回测评结果'}).click();
       await page.locator('.result-table tbody tr').filter({hasText:'209900003'}).getByRole('button',{name:'查看详情'}).click();
       await page.getByText('已准备 2 / 2 道题目，共 3 个问题').waitFor();await capture(page,'teacher-prepared',size);

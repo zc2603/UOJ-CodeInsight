@@ -103,7 +103,9 @@ async def check_preparation_schema():
             except ValidationError as exc:
                 print("quality_validation=" + json.dumps([{"loc": e["loc"], "type": e["type"]} for e in exc.errors(include_input=False, include_context=False, include_url=False)]))
                 print("quality_response_length=" + str(len(raw)))
-        assert revision == "0007_lightweight_v1" and control == 1
+        await db.execute(text("SELECT settings_json, settings_revision FROM admin_users LIMIT 0"))
+        await db.execute(text("SELECT entry_minutes, reopen_minutes, grade_bands FROM quizzes LIMIT 0"))
+        assert revision == "0008_teacher_settings" and control == 1
         print(f"preparation_schema=ok revision={revision}")
         print("preparation_jobs=" + (",".join(f"{state}:{count}" for state, count in counts) or "empty"))
         from app.generation_diagnostics import latest_generation

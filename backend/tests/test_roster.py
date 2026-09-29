@@ -88,7 +88,12 @@ async def test_roster_api_rechecks_on_create_and_excludes_login(db):
     async def get_test_db():
         yield db
     app.dependency_overrides[get_db] = get_test_db
-    app.dependency_overrides[require_admin] = lambda: None
+    from app.api.dependencies import AdminPrincipal
+    from app.models import AdminUser
+    teacher = AdminUser(username="roster-teacher", password_hash="synthetic")
+    db.add(teacher)
+    await db.commit()
+    app.dependency_overrides[require_admin] = lambda: AdminPrincipal(teacher.id, teacher.username)
     try:
         with patch.object(admin, "_import_service", return_value=ImportService(Settings(), Repository(), Archive())):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

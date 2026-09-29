@@ -84,17 +84,17 @@ async def test_creation_freezes_largest_id_as_one_question_and_missing_problem_t
     first = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
         student_number="231250001", session_id="first")
     assert first.assessment_version == "lightweight_v1"
-    assert first.question_count == 5 and first.duration_minutes == 25
+    assert first.question_count == 5 and first.duration_minutes == 20
     assert len(first.questions) == 5
     assert all("correct_choice_id" not in q and "reference_answer" not in q and "core_idea" not in q
         for q in first.questions)
     second = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
         student_number="231250002", session_id="second")
-    assert second.question_count == 3 and second.duration_minutes == 15
+    assert second.question_count == 3 and second.duration_minutes == 12
     assert [q["problem_id"] for q in second.questions] == [11, 11, 13]
     third = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
         student_number="231250003", session_id="third")
-    assert third.question_count == 1 and third.duration_minutes == 5
+    assert third.question_count == 1 and third.duration_minutes == 4
     assert third.questions[0]["problem_id"] == 13
 
 

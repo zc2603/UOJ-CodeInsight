@@ -59,6 +59,7 @@ class ContestPreviewResponse(BaseModel):
 
 
 class QuizCreateRequest(BaseModel):
+    expected_settings_revision: int | None = Field(default=None, ge=0)
     roster_text: str | None = Field(default=None, max_length=65536)
     contest_id: int = Field(gt=0)
     name: str | None = Field(default=None, min_length=1, max_length=200)
@@ -71,14 +72,9 @@ class QuizCreateRequest(BaseModel):
     assessment_version: Literal["legacy", "lightweight_v1"] | None = None
     choice_problem_ids: list[int] | None = None
     time_mode: Literal["per_question", "fixed"] = "per_question"
-    minutes_per_question: int = Field(default=5, ge=1, le=180)
-
-    @model_validator(mode="after")
-    def validate_time(self):
-        if self.time_mode == "fixed" and self.duration_minutes is None:
-            raise ValueError("fixed duration requires duration_minutes")
-        return self
-
+    minutes_per_question: int = Field(default=4, ge=1, le=180)
+    entry_minutes: int = Field(default=30, ge=1, le=1440)
+    reopen_minutes: int = Field(default=30, ge=1, le=1440)
 
 class QuizCreatedResponse(BaseModel):
     id: uuid.UUID
@@ -95,6 +91,10 @@ class QuizOpenRequest(BaseModel):
     confirm_partial: bool = False
 
 
+class QuizReopenRequest(BaseModel):
+    minutes: int | None = Field(default=None, ge=1, le=1440, strict=True)
+
+
 class PreparationProgress(BaseModel):
     completed_questions: int = 0
     cancelled: int = 0
@@ -109,6 +109,8 @@ class PreparationProgress(BaseModel):
 
 
 class QuizSummary(BaseModel):
+    entry_minutes: int = 30
+    reopen_minutes: int = 30
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -206,6 +208,8 @@ class ManualOverrideRequest(BaseModel):
 
 
 class ResultRow(BaseModel):
+    grade: str | None = None
+    completed_at: datetime | None = None
     quality_attention: bool = False
     timed_out: bool = False
     review_required: bool = False

@@ -8,13 +8,26 @@ function tokenClass(token: string): string {
   return "code-keyword";
 }
 
-export function CodeBlock({ code, language }: { code: string; language?: string }) {
+export function CodeBlock({ code, language, fontSize, wrap = false }: { code: string; language?: string; fontSize?: number; wrap?: boolean }) {
   const normalized = code.replace(/\r\n?/g, "\n");
   const parts = normalized.split(TOKEN_PATTERN);
+  if (wrap) {
+    const lines: { text: string; className: string }[][] = [[]];
+    for (const part of parts) {
+      part.split("\n").forEach((text, index) => {
+        if (index) lines.push([]);
+        lines[lines.length - 1].push({ text, className: IS_TOKEN.test(part) ? tokenClass(part) : "" });
+      });
+    }
+    return <div className="source-wrap">{language && <div className="source-language">{language}</div>}
+      <pre className="source-code source-code-wrapped" style={{ fontSize }}>{lines.map((line, index) =>
+        <span className="wrapped-code-line" key={index}><span className="wrapped-line-number" aria-hidden="true" data-line={index + 1} />
+          <code>{line.map((part, i) => <span className={part.className} key={i}>{part.text}</span>)}{index < lines.length - 1 ? "\n" : ""}</code></span>)}</pre></div>;
+  }
   return (
     <div className="source-wrap">
       {language && <div className="source-language">{language}</div>}
-      <pre className="source-code"><span className="source-line-numbers" aria-hidden="true">{normalized.split("\n").map((_, index) => <span key={index} data-line={index + 1} />)}</span><code>{parts.map((part, index) =>
+      <pre className="source-code" style={{ fontSize }}><span className="source-line-numbers" aria-hidden="true">{normalized.split("\n").map((_, index) => <span key={index} data-line={index + 1} />)}</span><code>{parts.map((part, index) =>
         IS_TOKEN.test(part)
           ? <span className={tokenClass(part)} key={index}>{part}</span>
           : <span key={index}>{part}</span>

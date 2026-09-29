@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.models import (Answer, Appeal, Attempt, AttemptStatus, GenerationControl, GenerationJob, Question,
     Quiz, QuizParticipant, QuizStatus, ReviewIssue, ScoreAudit)
 from app.time_utils import ensure_utc
+from app.services.teacher_settings import grade_for
 
 
 def effective_score(answer: Answer) -> int | None:
@@ -162,7 +163,7 @@ async def student_result(db, quiz_id: uuid.UUID, student_number: str) -> dict:
         "submitted_at": attempt.submitted_at or (ensure_utc(attempt.deadline_at) if attempt.timed_out else
             max((ensure_utc(q.answer.submitted_at) for q in attempt.questions if q.answer), default=None)),
         "submission_source": attempt.submission_source or ("timeout" if attempt.timed_out else "manual"),
-        "score": score, "max_score": len(attempt.questions) * 2,
+        "score": score, "grade": grade_for(score, quiz.grade_bands), "max_score": len(attempt.questions) * 2,
         "percent": score / (len(attempt.questions) * 2) * 100 if attempt.questions else None,
         "questions": questions}
 

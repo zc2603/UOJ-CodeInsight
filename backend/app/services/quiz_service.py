@@ -40,6 +40,7 @@ from app.time_utils import ensure_utc
 from app.schemas.llm import QuestionGenerationResult, LightweightGenerationResult
 from app.services.generation_service import enqueue
 from app.services.roster_service import select_roster
+from app.services.teacher_settings import TeacherSettings, choice_defaults
 
 
 def preview_from_bundle(bundle: ImportBundle, roster_text: str | None = None) -> ContestPreviewResponse:
@@ -66,14 +67,26 @@ def preview_from_bundle(bundle: ImportBundle, roster_text: str | None = None) ->
 
 
 async def persist_quiz(
-    db: AsyncSession, bundle: ImportBundle, request: QuizCreateRequest
+    db: AsyncSession, bundle: ImportBundle, request: QuizCreateRequest, defaults: TeacherSettings | None = None
 ) -> tuple[Quiz, str]:
+    defaults = defaults or TeacherSettings()
+    updates = {}
+    for name, value in {"minutes_per_question": defaults.minutes_per_question,
+        "time_mode": defaults.time_mode, "entry_minutes": defaults.entry_minutes,
+        "reopen_minutes": defaults.reopen_minutes or defaults.entry_minutes}.items():
+        if name not in request.model_fields_set:
+            updates[name] = value
+    if "duration_minutes" not in request.model_fields_set and updates.get("time_mode", request.time_mode) == "fixed":
+        updates["duration_minutes"] = defaults.fixed_minutes
+    request = request.model_copy(update=updates)
+    if request.time_mode == "fixed" and request.duration_minutes is None:
+        raise ValueError("固定总时长不能为空")
     bundle, roster = select_roster(bundle, request.roster_text)
     if roster is not None and not roster.matched_students:
         raise ValueError("名单中没有可参与的学生，请调整名单后再创建")
     now = datetime.now(timezone.utc)
     start_time = request.start_time or now
-    end_time = request.end_time or (start_time + timedelta(minutes=30))
+    end_time = request.end_time or (start_time + timedelta(minutes=request.entry_minutes))
     if start_time.tzinfo is None or end_time.tzinfo is None:
         raise ValueError("Quiz start and end times must include a timezone")
     if end_time <= start_time:
@@ -88,8 +101,7 @@ async def persist_quiz(
     problem_ids = {p.problem_id for p in bundle.problems}
     if version == "lightweight_v1" and not problem_ids:
         raise ValueError("本场 Contest 没有可测的原题")
-    defaults = problem_ids - {max(problem_ids)} if len(problem_ids) >= 3 else problem_ids
-    choice_ids = set(request.choice_problem_ids) if request.choice_problem_ids is not None else defaults
+    choice_ids = set(request.choice_problem_ids) if request.choice_problem_ids is not None else choice_defaults(problem_ids, defaults.question_template)
     if version == "lightweight_v1" and (not problem_ids or len(choice_ids) != len(request.choice_problem_ids or list(choice_ids)) or not choice_ids <= problem_ids):
         raise ValueError("问题安排必须使用本场原题且不能重复")
     max_count = len(problem_ids) + len(choice_ids)
@@ -107,6 +119,9 @@ async def persist_quiz(
         minutes_per_question=3 if version == "legacy" else request.minutes_per_question,
         question_mode="all_positive_2" if version == "legacy" else "lightweight_v1",
         assessment_version=version,
+        entry_minutes=request.entry_minutes,
+        reopen_minutes=request.reopen_minutes,
+        grade_bands=[b.model_dump() for b in defaults.grade_bands],
         time_mode="per_question" if version == "legacy" else request.time_mode,
         submission_cutoff=bundle.cutoff.astimezone(timezone.utc),
         status=QuizStatus.DRAFT,

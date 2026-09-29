@@ -105,12 +105,12 @@ async def open_quiz(db, quiz_id, *, confirm_partial=False):
     now = datetime.now(timezone.utc)
     quiz.status = QuizStatus.PUBLISHED
     quiz.start_time = now
-    quiz.end_time = now + timedelta(minutes=30)
+    quiz.end_time = now + timedelta(minutes=quiz.entry_minutes or 30)
     await db.commit()
     return quiz
 
 
-async def reopen_quiz(db, quiz_id):
+async def reopen_quiz(db, quiz_id, *, minutes=None):
     quiz = (await db.execute(select(Quiz).where(Quiz.id == quiz_id).with_for_update()
         .execution_options(populate_existing=True))).scalar_one_or_none()
     if quiz is None:
@@ -124,7 +124,7 @@ async def reopen_quiz(db, quiz_id):
         raise HTTPException(409, "测评仍在开放中，请刷新页面")
     quiz.status = QuizStatus.PUBLISHED
     quiz.start_time = now
-    quiz.end_time = now + timedelta(minutes=30)
+    quiz.end_time = now + timedelta(minutes=minutes or quiz.reopen_minutes or 30)
     await db.commit()
     return quiz
 

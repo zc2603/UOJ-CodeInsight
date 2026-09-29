@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { BookOpenCheck, CheckCircle2, Clock3, FileCheck2, LoaderCircle, LogOut, MessageSquareText, RefreshCw } from "lucide-react";
 import { api } from "../api";
 import { createRequestId } from "../requestId";
-import { scoreGrade } from "../scoreDisplay";
 import { ProblemStatement } from "../components/ProblemStatement";
 
 interface Appeal { id: string; state: string; reason: string; resolution: string | null; question_score_version: number }
@@ -13,6 +12,7 @@ interface ResultQuestion {
   reference_answer?: string | null; correct_choice_id?: string | null; score_version: number; appeals: Appeal[];
 }
 interface Result {
+  grade?: string | null;
   published: boolean; participated?: boolean; message?: string; score?: number;
   max_score?: number; submitted_at?: string;
   submission_source?: string; questions?: ResultQuestion[];
@@ -77,7 +77,7 @@ export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout:
       <>
         <section className="card student-score-summary" aria-label="成绩概览">
           <div className="student-score-main"><span className="status-pill status-finished"><CheckCircle2 size={14} />成绩已公布</span>
-            <p className="result-total"><strong>{scoreGrade(result.score)}</strong></p><span className="muted">本次测评等级</span></div>
+            <p className="result-total"><strong>{result.grade ?? "—"}</strong></p><span className="muted">本次测评等级</span></div>
           <div className="student-score-meta"><div><span>本次测评总分</span><strong>{result.score}<small> / {result.max_score} 分</small></strong></div>
             <div><span>完成时间</span><strong className="completion-time">{result.submitted_at ? new Date(result.submitted_at).toLocaleString("zh-CN", { hour12: false }) : "—"}</strong>
               <small>{result.submission_source === "timeout" ? "超时自动交卷" : "手动交卷"}</small></div></div>

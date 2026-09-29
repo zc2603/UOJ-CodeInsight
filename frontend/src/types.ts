@@ -63,6 +63,8 @@ export interface PreparationProgress {
 }
 
 export interface QuizSummary {
+  entry_minutes?: number;
+  reopen_minutes?: number;
   assessment_version?: string;
   scores_published?: boolean;
   pre_generated: boolean;
@@ -80,6 +82,8 @@ export interface QuizSummary {
 }
 
 export interface ResultRow {
+  grade?: string | null;
+  completed_at?: string | null;
   quality_attention: boolean;
   timed_out: boolean;
   review_required: boolean;

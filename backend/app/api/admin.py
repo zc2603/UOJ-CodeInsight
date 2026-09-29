@@ -53,9 +53,22 @@ from app.time_utils import ensure_utc
 from app.services.generation_service import open_quiz, reopen_quiz, regenerate_prepared, retry_failed, summarize, stop_preparation
 from app.services.publication import publish as publish_scores, score_question, resolve_appeal, effective_attempt_score, effective_score
 from app.services.llm_provider import LIGHTWEIGHT_GENERATOR_VERSIONS
+from app.services.teacher_settings import TeacherSettings, SettingsUpdate, load_settings, save_settings, grade_for, choice_defaults
+from app.schemas.api import QuizReopenRequest
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.get("/settings")
+async def teacher_settings(principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    settings, revision = await load_settings(db, principal.user_id)
+    return {"settings": settings, "revision": revision, "defaults": TeacherSettings()}
+
+
+@router.put("/settings")
+async def update_teacher_settings(payload: SettingsUpdate, principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    return await save_settings(db, principal.user_id, payload)
 
 
 @router.get("/features", dependencies=[Depends(require_admin)])
@@ -132,14 +145,20 @@ def _import_service(request: Request):
     response_model=ContestPreviewResponse,
     dependencies=[Depends(require_admin)],
 )
-async def preview_contest(payload: QuizPreviewRequest, request: Request):
+async def preview_contest(payload: QuizPreviewRequest, request: Request,
+    principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     try:
         bundle = await _import_service(request).build_bundle(
             payload.contest_id,
             payload.submission_cutoff,
             require_cutoff_reached=False,
         )
-        return preview_from_bundle(bundle, payload.roster_text)
+        preview = preview_from_bundle(bundle, payload.roster_text)
+        defaults, _ = await load_settings(db, principal.user_id)
+        choices = choice_defaults([p.problem_id for p in preview.problems], defaults.question_template)
+        for problem in preview.problems:
+            problem.include_choice = problem.problem_id in choices
+        return preview
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except HTTPException:
@@ -157,6 +176,7 @@ async def create_quiz(
     payload: QuizCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    principal: AdminPrincipal = Depends(require_admin),
 ):
     try:
         bundle = await _import_service(request).build_bundle(
@@ -165,7 +185,10 @@ async def create_quiz(
             require_cutoff_reached=not payload.allow_before_cutoff,
             snapshot_at_now_if_future=payload.allow_before_cutoff,
         )
-        quiz, code = await persist_quiz(db, bundle, payload)
+        defaults, revision = await load_settings(db, principal.user_id)
+        if payload.expected_settings_revision is not None and payload.expected_settings_revision != revision:
+            raise HTTPException(409, "教师默认设置已更新，请重新加载设置后创建测评")
+        quiz, code = await persist_quiz(db, bundle, payload, defaults)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return QuizCreatedResponse(id=quiz.id, quiz_code=code, status=quiz.status)
@@ -216,6 +239,8 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
         result.append(
             QuizSummary(
                 id=quiz.id,
+                entry_minutes=quiz.entry_minutes,
+                reopen_minutes=quiz.reopen_minutes,
                 assessment_version=quiz.assessment_version,
                 scores_published=quiz.published_at is not None,
                 name=quiz.name,
@@ -277,8 +302,8 @@ async def publish_quiz(quiz_id: uuid.UUID, payload: QuizOpenRequest = Body(defau
 
 
 @router.post("/quizzes/{quiz_id}/reopen", dependencies=[Depends(require_admin)])
-async def reopen_published_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    quiz = await reopen_quiz(db, quiz_id)
+async def reopen_published_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db), payload: QuizReopenRequest = Body(default=QuizReopenRequest())):
+    quiz = await reopen_quiz(db, quiz_id, minutes=payload.minutes)
     return {"status": quiz.status, "start_time": quiz.start_time, "end_time": quiz.end_time}
 
 
@@ -357,6 +382,10 @@ async def _result_rows(db: AsyncSession, quiz_id: uuid.UUID) -> list[ResultRow]:
         problem_count = len({q.submission_snapshot_id for q in questions})
         rows.append(
             ResultRow(
+                grade=grade_for(final, quiz.grade_bands) if attempt and attempt.status == AttemptStatus.FINISHED and not attempt.review_required and questions else None,
+                completed_at=(attempt.submitted_at or (attempt.deadline_at if attempt.timed_out else
+                    max((q.answer.submitted_at for q in questions if q.answer), default=None)))
+                    if attempt and attempt.status == AttemptStatus.FINISHED else None,
                 quality_attention=get_settings().quality_audit_enabled and any(quality_presentation(j, i)["attention"]
                     for j in jobs if j.participant_id == participant.id and j.round_no == (
                         attempt.attempt_no if attempt and attempt.status != AttemptStatus.RESET else latest_round.get(participant.id))
@@ -588,6 +617,8 @@ async def export_csv(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
             "final_percent",
             "status",
             "review_required",
+            "grade",
+            "completed_at",
         ]
     )
     for row in rows:
@@ -603,6 +634,8 @@ async def export_csv(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
                 row.final_percent,
                 (row.attempt_status or row.participant_status).value,
                 row.review_required,
+                row.grade,
+                row.completed_at.isoformat() if row.completed_at else "",
             ]
         )
     data = "\ufeff" + output.getvalue()

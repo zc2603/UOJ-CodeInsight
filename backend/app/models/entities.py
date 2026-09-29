@@ -70,6 +70,8 @@ class AdminUser(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="teacher")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    settings_json: Mapped[dict | None] = mapped_column(JSON)
+    settings_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -86,6 +88,9 @@ class Quiz(Base):
     minutes_per_question: Mapped[int] = mapped_column(Integer, default=3)
     question_mode: Mapped[str] = mapped_column(String(30), default="all_positive_2")
     assessment_version: Mapped[str] = mapped_column(String(30), default="legacy", server_default="legacy")
+    entry_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    reopen_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    grade_bands: Mapped[list | None] = mapped_column(JSON)
     time_mode: Mapped[str] = mapped_column(String(20), default="per_question", server_default="per_question")
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_by: Mapped[str | None] = mapped_column(String(80))

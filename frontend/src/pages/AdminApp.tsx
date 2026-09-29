@@ -5,6 +5,7 @@ import {
   RotateCcw, Search, ShieldCheck, Users, Trash2,
 } from "lucide-react";
 import { api } from "../api";
+import { scoreGrade } from "../scoreDisplay";
 import { ProblemStatement } from "../components/ProblemStatement";
 import { QualityAudit } from "../components/QualityAudit";
 import { AssessmentSetup } from "../components/AssessmentSetup";
@@ -68,6 +69,11 @@ function resultBucket(result: ResultRow) {
   if (["PREPARING", "IN_PROGRESS", "GRADING"].includes(status)) return "active";
   if (["GRADING_ERROR", "EXPIRED"].includes(status)) return "attention";
   return "pending";
+}
+
+function confirmedResultScore(result: ResultRow) {
+  return !result.review_required && result.attempt_status?.toUpperCase() === "FINISHED"
+    && result.question_count > 0 ? result.final_score : null;
 }
 
 function groupAttemptQuestions(questions: AttemptQuestionDetail[]) {
@@ -722,7 +728,7 @@ export function AdminApp() {
           <section className="card table-card quiz-list-card">
             <div className="quiz-list-heading"><div><h2>全部测评</h2><p>管理课堂测评，跟进学生作答。</p></div><span className="status-pill">{quizzes.length} 场测评</span></div>
             {quizzes.length ? <table className="quiz-table">
-              <thead><tr><th>测评</th><th>Contest</th><th>最后进入时间</th><th>完成进度</th><th>平均分</th><th>操作</th></tr></thead>
+              <thead><tr><th>测评</th><th>Contest</th><th>最后进入时间</th><th>完成进度</th><th>平均原始分</th><th>操作</th></tr></thead>
               <tbody>{quizzes.map(quiz => {
                 const progress = quiz.participant_count ? Math.min(100, quiz.finished_count / quiz.participant_count * 100) : 0;
                 return <tr key={quiz.id}>
@@ -730,7 +736,7 @@ export function AdminApp() {
                   <td className="mono">#{quiz.uoj_contest_id}</td>
                   <td>{quiz.status.toUpperCase() === "DRAFT" ? "开放后 30 分钟" : formatDate(quiz.end_time)}</td>
                   <td><div className="table-progress"><span><strong>{quiz.finished_count}</strong> / {quiz.participant_count}</span><i><b style={{ width: `${progress}%` }} /></i></div></td>
-                  <td><strong>{quiz.average_score !== null ? `${quiz.average_score.toFixed(1)}%` : "—"}</strong></td>
+                  <td><strong>{quiz.average_score !== null ? `${quiz.average_score.toFixed(1)} 分` : "—"}</strong></td>
                   <td className="actions-cell"><div className="actions"><button className="link primary-link" onClick={() => void showResults(quiz)}>查看结果</button><details className="action-menu" name="quiz-actions"><summary aria-label="更多操作"><MoreHorizontal size={18} /></summary><div onClick={event => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; }}><button onClick={() => void copyText(studentLink(quiz.id), "学生链接已复制")}><Copy size={15} />复制学生链接</button><button disabled={busy} onClick={() => regenerateCode(quiz)}><RefreshCw size={15} />生成备用码</button>{["CLOSED", "ACTIVE"].includes(quiz.status.toUpperCase()) && <button disabled={busy} onClick={() => reopenQuiz(quiz)}><RotateCcw size={15} />重新开放测评</button>}<button className="delete-quiz" disabled={busy} onClick={() => deleteQuiz(quiz)}><Trash2 size={15} />删除此测评</button></div></details></div></td>
                 </tr>;
               })}</tbody>
@@ -798,7 +804,7 @@ export function AdminApp() {
           <section className="result-overview">
             <div><Users size={18} /><span>学生总数<strong>{results.length}</strong></span></div>
             <div><Check size={18} /><span>已完成<strong>{results.filter(result => !result.review_required && result.attempt_status?.toUpperCase() === "FINISHED").length}</strong></span></div>
-            <div><BarChart3 size={18} /><span>已评分平均分<strong>{(() => { const values = results.flatMap(result => result.final_percent === null ? [] : [result.final_percent]); return values.length ? `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)}%` : "—"; })()}</strong></span></div>
+            <div><BarChart3 size={18} /><span>平均原始分<strong>{(() => { const values = results.map(confirmedResultScore).filter((score): score is number => score !== null); return values.length ? `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)} 分` : "—"; })()}</strong></span></div>
             <div><CircleAlert size={18} /><span>需关注学生<strong>{results.filter(result => resultBucket(result) === "attention").length}</strong></span></div>
           </section>
           <AppealPanel appeals={appeals} studentFor={studentForAttempt} busy={busy}
@@ -806,7 +812,17 @@ export function AdminApp() {
             onViewAttempt={id => void loadAttempt(id)} />
           <section className="card table-card result-card">
             <div className="results-table-heading"><h2>学生成绩</h2><span>按学生查看作答进度与评分结果</span></div>
-            {results.length ? <><div className="result-toolbar"><label><Search size={15} /><input aria-label="搜索学号" value={resultQuery} onChange={event => setResultQuery(event.target.value)} placeholder="搜索学号" /></label><div className="filter-tabs" role="group" aria-label="筛选作答状态"><button className={resultFilter === "all" ? "active" : ""} onClick={() => setResultFilter("all")}>全部</button><button className={resultFilter === "finished" ? "active" : ""} onClick={() => setResultFilter("finished")}>已完成</button><button className={resultFilter === "active" ? "active" : ""} onClick={() => setResultFilter("active")}>进行中</button><button className={resultFilter === "pending" ? "active" : ""} onClick={() => setResultFilter("pending")}>未作答</button><button className={resultFilter === "attention" ? "active" : ""} onClick={() => setResultFilter("attention")}>需关注</button></div><span>{filteredResults.length} / {results.length} 人</span></div>{filteredResults.length ? <table className="result-table"><thead><tr><th>学号</th><th>覆盖题目</th><th>问题数</th><th>原始分</th><th>百分制</th><th>最低置信度</th><th>状态</th><th></th></tr></thead><tbody>{filteredResults.map(result => <tr key={result.student_number}><td className="mono student-number">{result.student_number}</td><td>{result.problem_count}</td><td>{result.question_count}</td><td><strong>{(result.review_required ? result.auto_score : result.final_score) ?? "—"}{result.max_score ? ` / ${result.max_score}` : ""}</strong>{result.review_required && <small>建议分 · 待复核</small>}{result.manual_score !== null && <small>人工覆盖</small>}</td><td><strong className="percent-score">{result.final_percent !== null ? `${result.final_percent.toFixed(1)}%` : "—"}</strong></td><td>{result.confidence?.toFixed(2) ?? "—"}</td><td><span className={`status-pill status-${statusClass(result.review_required ? "GRADING_ERROR" : result.attempt_status || result.participant_status)}`}>{statusLabel(result.review_required ? "REVIEW_REQUIRED" : result.attempt_status || result.participant_status)}</span>{result.quality_attention && <span className="status-pill quality-attention">题目质量需关注</span>}{result.timed_out && <small>超时自动交卷</small>}</td><td>{result.attempt_id && <button className="link" disabled={busy} onClick={() => void loadAttempt(result.attempt_id!)}>查看详情</button>}{(!result.attempt_id || result.attempt_status === "RESET") && result.prepared_problem_count > 0 && <button className="link" disabled={busy} onClick={() => void loadPrepared(result.student_number)}>{result.attempt_id ? "查看新题" : "查看详情"}</button>}</td></tr>)}</tbody></table> : <div className="filtered-empty">没有符合当前条件的学生</div>}</> : <div className="empty-state compact-empty"><div className="empty-symbol"><Users size={25} /></div><h2>暂时没有作答记录</h2><p>学生进入并开始测评后，进度会自动显示在这里。</p></div>}
+            {results.length ? <><div className="result-toolbar"><label><Search size={15} /><input aria-label="搜索学号" value={resultQuery} onChange={event => setResultQuery(event.target.value)} placeholder="搜索学号" /></label><div className="filter-tabs" role="group" aria-label="筛选作答状态"><button className={resultFilter === "all" ? "active" : ""} onClick={() => setResultFilter("all")}>全部</button><button className={resultFilter === "finished" ? "active" : ""} onClick={() => setResultFilter("finished")}>已完成</button><button className={resultFilter === "active" ? "active" : ""} onClick={() => setResultFilter("active")}>进行中</button><button className={resultFilter === "pending" ? "active" : ""} onClick={() => setResultFilter("pending")}>未作答</button><button className={resultFilter === "attention" ? "active" : ""} onClick={() => setResultFilter("attention")}>需关注</button></div><span>{filteredResults.length} / {results.length} 人</span></div>
+              {filteredResults.length ? <table className="result-table">
+                <thead><tr><th>学号</th><th>覆盖题目</th><th>问题数</th><th>原始分</th><th>等级</th><th>最低置信度</th><th>状态</th><th></th></tr></thead>
+                <tbody>{filteredResults.map(result => <tr key={result.student_number}>
+                  <td className="mono student-number">{result.student_number}</td><td>{result.problem_count}</td><td>{result.question_count}</td>
+                  <td><strong>{(result.review_required ? result.auto_score : result.final_score) ?? "—"}{result.max_score ? ` / ${result.max_score}` : ""}</strong>{result.review_required && <small>建议分 · 待复核</small>}{result.manual_score !== null && <small>人工覆盖</small>}</td>
+                  <td><strong className="grade-score">{scoreGrade(confirmedResultScore(result))}</strong></td>
+                  <td>{result.confidence?.toFixed(2) ?? "—"}</td>
+                  <td><span className={`status-pill status-${statusClass(result.review_required ? "GRADING_ERROR" : result.attempt_status || result.participant_status)}`}>{statusLabel(result.review_required ? "REVIEW_REQUIRED" : result.attempt_status || result.participant_status)}</span>{result.quality_attention && <span className="status-pill quality-attention">题目质量需关注</span>}{result.timed_out && <small>超时自动交卷</small>}</td>
+                  <td>{result.attempt_id && <button className="link" disabled={busy} onClick={() => void loadAttempt(result.attempt_id!)}>查看详情</button>}{(!result.attempt_id || result.attempt_status === "RESET") && result.prepared_problem_count > 0 && <button className="link" disabled={busy} onClick={() => void loadPrepared(result.student_number)}>{result.attempt_id ? "查看新题" : "查看详情"}</button>}</td>
+                </tr>)}</tbody></table> : <div className="filtered-empty">没有符合当前条件的学生</div>}</> : <div className="empty-state compact-empty"><div className="empty-symbol"><Users size={25} /></div><h2>暂时没有作答记录</h2><p>学生进入并开始测评后，进度会自动显示在这里。</p></div>}
           </section>
         </>}
 

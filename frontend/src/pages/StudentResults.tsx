@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BookOpenCheck, CheckCircle2, Clock3, FileCheck2, LoaderCircle, LogOut, MessageSquareText, RefreshCw } from "lucide-react";
 import { api } from "../api";
 import { createRequestId } from "../requestId";
+import { scoreGrade } from "../scoreDisplay";
 import { ProblemStatement } from "../components/ProblemStatement";
 
 interface Appeal { id: string; state: string; reason: string; resolution: string | null; question_score_version: number }
@@ -15,16 +16,6 @@ interface Result {
   published: boolean; participated?: boolean; message?: string; score?: number;
   max_score?: number; submitted_at?: string;
   submission_source?: string; questions?: ResultQuestion[];
-}
-
-function scoreGrade(score: number | undefined) {
-  if (score === undefined || !Number.isFinite(score) || score < 0) return "—";
-  if (score >= 8) return "A+";
-  if (score >= 6) return "A";
-  if (score >= 4) return "B+";
-  if (score >= 2) return "B";
-  if (score >= 1) return "C";
-  return "D";
 }
 
 export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout: () => void }) {

@@ -306,7 +306,7 @@ button svg, .button svg { flex-shrink: 0; }
 .result-overview > div { min-width: 170px; display: flex; align-items: center; gap: 11px; padding: 11px 14px; background: #fff; color: var(--green-700); }
 .result-overview span { display: grid; color: var(--muted); font-size: 10px; }
 .result-overview strong { color: var(--ink); font-size: 16px; }
-.percent-score { color: var(--green-700); font-size: 14px; }
+.grade-score { color: var(--green-700); font-size: 14px; }
 .student-number { font-weight: 650; }
 .result-card { overflow: hidden; }
 .result-toolbar { display: flex; align-items: center; gap: 15px; padding: 11px 14px; border-bottom: 1px solid #e2e7e3; background: #fafbfa; }
@@ -403,7 +403,7 @@ input:focus, textarea:focus { background: #fff; }
 input::placeholder, textarea::placeholder { color: #7c8981; }
 h1 { font-weight: 750; letter-spacing: -.035em; }
 .card { border-radius: 14px; box-shadow: var(--shadow-soft); }
-.mono, .summary-strip strong, .percent-score, .score, .timer { font-variant-numeric: tabular-nums; }
+.mono, .summary-strip strong, .grade-score, .score, .timer { font-variant-numeric: tabular-nums; }
 
 /* Entry pages */
 .center-page { background: radial-gradient(ellipse at 50% 0, #e8f1eb 0, transparent 65%), var(--canvas); }

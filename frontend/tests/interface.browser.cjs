@@ -22,7 +22,7 @@ function fixture() {
   return {questions:qs,resultMode:'waiting',loggedIn:true,submissions:[],appeals:[],calls:[],
     quizzes:[{id:quizId,name:'合成课堂测评',uoj_contest_id:7,pre_generated:true,preparation:null,
       assessment_version:'lightweight_v1',scores_published:false,status:'CLOSED',participant_count:3,finished_count:2,
-      average_score:83.3,start_time:'2026-09-29T01:00:00Z',end_time:'2026-09-29T02:00:00Z'},
+      average_score:3,start_time:'2026-09-29T01:00:00Z',end_time:'2026-09-29T02:00:00Z'},
       {id:'draft',name:'课前准备 · 合成测评',uoj_contest_id:8,pre_generated:true,
         preparation:{total:3,completed:3,completed_questions:5,running:0,queued:0,failed:0,cancelled:0,students_total:1,students_ready:1,ready:true},
         assessment_version:'lightweight_v1',scores_published:false,status:'DRAFT',participant_count:1,finished_count:0,average_score:null,
@@ -89,9 +89,9 @@ async function wire(page,f,errors) {
     else if(p.endsWith('/preview-contest')) data={contest_name:'合成课堂测评',submission_cutoff:'2026-09-28T01:00:00Z',cutoff_reached:true,
       problems:[101,102,103].map((id,i)=>({problem_id:id,display_order:i+1,title:`第 ${i+1} 题 · 合成状态更新`,include_choice:i<2})),
       numeric_student_accounts:3,students_with_eligible_problem:3,selected_submission_snapshots:8,parser_errors:[],roster:null};
-    else if(p.endsWith('/results')) data=[1,2,3].map((i)=>({student_number:`20990000${i}`,participant_status:'READY',attempt_id:i<3?'attempt-'+i:null,
-      attempt_status:i<3?'FINISHED':null,problem_count:2,question_count:3,auto_score:i<3?6:null,manual_score:null,final_score:i<3?6:null,
-      max_score:6,final_percent:i<3?100:null,confidence:.95,review_required:false,timed_out:false,prepared_problem_count:2,preparation_total:2}));
+    else if(p.endsWith('/results')) data=[1,2,3,4,5].map((i)=>({student_number:`20990000${i}`,participant_status:'READY',attempt_id:i===3?null:'attempt-'+i,
+      attempt_status:i===3?null:i===5?'GRADING':'FINISHED',problem_count:2,question_count:3,auto_score:i===3?null:i===2?0:6,manual_score:null,final_score:i===3?null:i===2?0:6,
+      max_score:6,final_percent:i===3?null:i===2?0:100,confidence:.95,review_required:i===4,timed_out:false,prepared_problem_count:2,preparation_total:2}));
     else if(p.endsWith('/appeals')) data=[{id:'teacher-appeal',attempt_id:'attempt-1',question_id:'question-1',state:'pending',
       reason:'我用自己的话说明了更新作用，希望老师再核对一下。',score_snapshot:1,question_snapshot:f.questions[0].question,
       answer_snapshot:'每次都把当前读入的数加上。',resolution:null,created_at:'2026-09-29T02:00:00Z'}];
@@ -167,14 +167,14 @@ async function focusTrap(page) {
       assert.equal(await page.getByText('百分制成绩',{exact:true}).count(),0);
       assert.equal(await page.locator('.student-score-meta > div').first().locator('strong').textContent(),'5 / 6 分');
       if(size.width===1366) {
-        for(const [score,grade] of [[0,'D'],[1,'C'],[2,'B'],[3,'B'],[4,'B+'],[5,'B+'],[6,'A'],[7,'A'],[8,'A+'],[9,'A+'],[10,'A+']]) {
+        for(const [score,grade] of [[0,'D'],[1,'C'],[2,'C'],[3,'B'],[4,'B'],[5,'B+'],[6,'B+'],[7,'A'],[8,'A'],[9,'A+'],[10,'A+']]) {
           f.score=score;f.maxScore=10;
           await page.getByRole('button',{name:'刷新状态'}).click();
           await page.getByRole('button',{name:'刷新状态'}).waitFor();
           assert.equal(await page.locator('.result-total strong').textContent(),grade);
         }
         f.score=6;f.maxScore=6;await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('button',{name:'刷新状态'}).waitFor();
-        assert.equal(await page.locator('.result-total strong').textContent(),'A','6 / 6 must use raw score, not percentage');
+        assert.equal(await page.locator('.result-total strong').textContent(),'B+','6 / 6 must use raw score, not percentage');
         await capture(page,'student-results-grade-six',size);
         f.score=5;delete f.maxScore;await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('button',{name:'刷新状态'}).waitFor();
       }
@@ -188,14 +188,21 @@ async function focusTrap(page) {
 
       f.loggedIn=false;await page.goto('http://quiz.test/admin');await page.getByRole('heading',{name:'欢迎回来'}).waitFor();await capture(page,'teacher-login',size);
       await page.getByLabel('用户名',{exact:true}).fill('synthetic-teacher');await page.getByLabel('密码',{exact:true}).fill('synthetic-password');
-      await page.getByRole('button',{name:'登录管理端'}).click();await page.getByRole('heading',{name:'全部测评'}).waitFor();await capture(page,'teacher-list',size);
+      await page.getByRole('button',{name:'登录管理端'}).click();await page.getByRole('heading',{name:'全部测评'}).waitFor();
+      assert.equal(await page.locator('.quiz-table tbody tr').first().locator('td').nth(4).textContent(),'3.0 分');
+      await capture(page,'teacher-list',size);
       await page.getByRole('button',{name:'创建测评',exact:true}).first().click();await page.getByRole('heading',{name:'导入比赛'}).waitFor();
       await page.getByLabel('Contest ID').fill('7');await page.getByRole('button',{name:'导入并预览'}).click();await page.getByText('最多 5 问 · 3 道简答 + 2 道单选').waitFor();
       await capture(page,'teacher-create',size);await page.locator('.assessment-disclosure').nth(1).locator('summary').click();
       await page.getByRole('button',{name:'固定总时长'}).click();await page.locator('.assessment-minute-field input').fill('30');
       await capture(page,'teacher-settings',size);
       await page.getByRole('button',{name:'测评管理',exact:true}).click();await page.locator('.quiz-table').getByRole('button',{name:'查看结果'}).first().click();
-      await page.getByRole('heading',{name:'学生成绩',exact:true}).waitFor();await capture(page,'teacher-results',size);
+      await page.getByRole('heading',{name:'学生成绩',exact:true}).waitFor();
+      assert.equal(await page.getByRole('columnheader',{name:'等级',exact:true}).count(),1);
+      assert.equal(await page.getByRole('columnheader',{name:'百分制',exact:true}).count(),0);
+      assert.deepEqual(await page.locator('.result-table .grade-score').allTextContents(),['B+','D','—','—','—']);
+      assert.equal(await page.locator('.result-overview > div').nth(2).locator('strong').textContent(),'3.0 分');
+      await capture(page,'teacher-results',size);
       await page.getByLabel('搜索学号').fill('209900001');assert.equal(await page.locator('.result-table tbody tr').count(),1);await page.getByLabel('搜索学号').fill('');
       await page.getByRole('button',{name:'处理申诉'}).click();await focusTrap(page);await capture(page,'teacher-appeal-dialog',size);await page.keyboard.press('Escape');
       await page.getByRole('button',{name:'完整作答'}).click();await page.getByRole('heading',{name:'逐题成绩',exact:true}).waitFor();

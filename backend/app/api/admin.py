@@ -208,8 +208,8 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
         ]
         finished = [a for a in attempts if a.status == AttemptStatus.FINISHED and not a.review_required]
         scores = [effective_attempt_score(a) for a in finished]
-        percentages = [
-            score / (2 * len(attempt.questions)) * 100
+        valid_scores = [
+            score
             for attempt, score in zip(finished, scores, strict=True)
             if score is not None and attempt.questions
         ]
@@ -229,7 +229,7 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
                 participant_count=len(quiz.participants),
                 finished_count=len(finished),
                 average_score=(
-                    sum(percentages) / len(percentages) if percentages else None
+                    sum(valid_scores) / len(valid_scores) if valid_scores else None
                 ),
             )
         )

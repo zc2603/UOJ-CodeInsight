@@ -114,6 +114,51 @@ async def test_fixed_duration_and_invalid_choice_configuration(db):
 
 
 @pytest.mark.asyncio
+async def test_quiz_average_uses_confirmed_raw_scores_not_percentages(db):
+    from app.api.admin import list_quizzes
+
+    quiz = await prepared_quiz(db)
+    quiz_id = quiz.id
+    attempts, answers = [], []
+    for student, per_question in [("231250001", 2), ("231250002", 1), ("231250003", 0)]:
+        current = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz_id,
+            student_number=student, session_id=student)
+        attempt = await db.get(Attempt, current.attempt_id)
+        attempt.status = AttemptStatus.FINISHED
+        attempt.auto_score = per_question * current.question_count
+        attempts.append(attempt)
+        student_answers = []
+        for question in current.questions:
+            answer = Answer(question_id=uuid.UUID(question["id"]), student_answer="synthetic",
+                auto_score=per_question)
+            db.add(answer)
+            student_answers.append(answer)
+        answers.append(student_answers)
+    # Different actual maxima: 10/10, 4/6 after a per-question correction, 0/2.
+    # The zero must count; averaging percentages would give a different result.
+    answers[1][0].manual_score = 2
+
+    async def average():
+        await db.commit()
+        db.expire_all()
+        return next(row.average_score for row in await list_quizzes(db) if row.id == quiz_id)
+
+    assert await average() == pytest.approx(14 / 3)
+    attempts[1].review_required = True
+    assert await average() == 5
+    attempts[2].status = AttemptStatus.GRADING
+    assert await average() == 10
+    answers[0][0].auto_score = None
+    assert await average() is None  # Missing grades must not turn into zero.
+    attempts[0].manual_override_score = 7
+    assert await average() == 7  # Existing whole-attempt overrides remain effective.
+    db.add(Attempt(quiz_id=quiz_id, participant_id=attempts[0].participant_id,
+        attempt_no=2, selected_submission_snapshot_id=attempts[0].selected_submission_snapshot_id,
+        status=AttemptStatus.RESET, session_id="synthetic-new-round"))
+    assert await average() is None  # Never average the superseded finished round.
+
+
+@pytest.mark.asyncio
 async def test_custom_minutes_are_frozen_and_progress_counts_generated_questions(db):
     from app.schemas.api import PreparationProgress
     quiz = await prepared_quiz(db, QuizCreateRequest(contest_id=7, minutes_per_question=7))

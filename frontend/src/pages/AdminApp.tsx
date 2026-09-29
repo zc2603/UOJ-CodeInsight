@@ -105,9 +105,6 @@ export function AdminApp() {
   const [settingsLoadKey, setSettingsLoadKey] = useState(0);
   const [entryMinutes, setEntryMinutes] = useState(30);
   const [reopenMinutes, setReopenMinutes] = useState(30);
-  const [reopeningQuiz, setReopeningQuiz] = useState<QuizSummary | null>(null);
-  const [reopenInput, setReopenInput] = useState(30);
-  const [reopenError, setReopenError] = useState("");
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -443,7 +440,21 @@ export function AdminApp() {
   }
 
   function reopenQuiz(quiz: QuizSummary) {
-    setReopeningQuiz(quiz); setReopenInput(quiz.reopen_minutes ?? 30); setReopenError("");
+    setConfirm({
+      title: "重新开放这场测评？",
+      description: `确认后，最后进入时间将设为当前时间的 ${quiz.reopen_minutes ?? 30} 分钟后。已有题目、作答和成绩会保留；已提交的学生不会重新开始作答。`,
+      confirmLabel: "重新开放",
+      action: async () => {
+        setBusy(true);
+        setMessage("");
+        try {
+          await api(`/api/admin/quizzes/${quiz.id}/reopen`, { method: "POST" });
+          await loadQuizzes();
+          setToast(`测评已重新开放，学生可在 ${quiz.reopen_minutes ?? 30} 分钟内进入`);
+        } catch (error) { setMessage((error as Error).message); }
+        finally { setBusy(false); }
+      },
+    });
   }
 
   function regenerateCode(quiz: QuizSummary) {
@@ -806,10 +817,6 @@ export function AdminApp() {
                   {lightweightEnabled && <AssessmentSetup problems={preview.problems} choiceIds={choiceIds} onChoices={setChoiceIds}
                     timeMode={timeMode} onTimeMode={setTimeMode} perQuestionMinutes={perQuestionMinutes}
                     onPerQuestionMinutes={setPerQuestionMinutes} fixedMinutes={fixedMinutes} onFixedMinutes={setFixedMinutes} />}
-                  <details className="assessment-disclosure"><summary>进入窗口：{entryMinutes} 分钟 · 重新开放：{reopenMinutes} 分钟 · 调整</summary>
-                    <div className="settings-grid"><label>首次开放分钟数<input type="number" min={1} max={1440} value={entryMinutes || ""} onChange={e => setEntryMinutes(Number(e.target.value))} /></label>
-                      <label>重新开放默认分钟数<input type="number" min={1} max={1440} value={reopenMinutes || ""} onChange={e => setReopenMinutes(Number(e.target.value))} /></label></div></details>
-                  <p className="muted">本场等级规则：{settings.grade_bands.map(b => `${b.label} ≥ ${b.minimum}`).join(" · ")}（原始分）</p>
                   {!lightweightEnabled && <p className="muted">新版自由作答协议仍在质量回归前关闭创建入口；当前创建沿用历史测评规则。</p>}
                   {preview.parser_errors.length > 0 && <details className="parser-errors"><summary>查看 {preview.parser_errors.length} 条导入异常</summary><ul>{preview.parser_errors.map((error, index) => <li key={`${error.student_number}-${error.problem_id}-${index}`}>{error.student_number} · 题目 {error.problem_id}：{error.error}</li>)}</ul></details>}
                   <section className="roster-panel" aria-label="参与范围">
@@ -882,7 +889,7 @@ export function AdminApp() {
               <div className="question-title-row"><div className="question-index">问题 {index + 1}</div>{preparedDetail.can_edit && <button className="link" disabled={busy} onClick={() => { setEditingQuestion({...question, grading_points: [...question.grading_points]}); setEditError(""); }}>编辑问题</button>}</div><ProblemStatement className="generated-question" text={question.question} />
                {qualityAuditEnabled && <QualityAudit review={question.quality} />}
                {question.choices && <ol className="review-options">{question.choices.map(choice => <li key={choice.id}><strong>{choice.id}</strong><ProblemStatement text={choice.text} /></li>)}</ol>}
-               {question.question_en && <details className="english-details" open={settings.english_expanded}><summary>英文对照</summary><ProblemStatement className="question-en" text={question.question_en} />{question.choices?.map(c => <div key={c.id}><strong>{c.id}</strong><ProblemStatement text={c.text_en} /></div>)}</details>}
+               {settings.english_expanded && question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
                <dl><dt>参考答案</dt><dd>{question.reference_answer}</dd>
                  {question.core_idea && <><dt>核心理解目标</dt><dd>{question.core_idea}</dd></>}
                  {question.correct_choice_id && <><dt>正确选项</dt><dd>{question.correct_choice_id}</dd></>}
@@ -906,7 +913,7 @@ export function AdminApp() {
                  {question.choices && <ol className="review-options">{question.choices.map(choice => <li key={choice.id}><strong>{choice.id}</strong><ProblemStatement text={choice.text} /></li>)}</ol>}
                 {question.review_required && <p className="review-notice">{attempt.review_required ? "待教师复核" : "曾触发复核"}：{readableReviewReason(question.review_reason)}</p>}
                  {qualityAuditEnabled && <QualityAudit review={question.quality} />}
-              {question.question_en && <details className="english-details" open={settings.english_expanded}><summary>英文对照</summary><ProblemStatement className="question-en" text={question.question_en} />{question.choices?.map(c => <div key={c.id}><strong>{c.id}</strong><ProblemStatement text={c.text_en} /></div>)}</details>}
+              {settings.english_expanded && question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
                  <dl><dt>学生回答</dt><dd className="student-answer">{question.choice_id || question.student_answer || "尚未回答"}</dd>
                    <dt>评分原因</dt><dd>{question.reason ?? "—"}</dd>
                    <dt>有效分</dt><dd>{question.effective_score ?? question.score ?? "—"}</dd>
@@ -936,15 +943,6 @@ export function AdminApp() {
           </section>
         </>}
       </main>
-
-      {reopeningQuiz && <ConfirmDialog title="重新开放这场测评？" description={`本次进入窗口为 ${reopenInput} 分钟。已有题目、作答及个人截止时间保留。`}
-        confirmLabel="重新开放" busy={busy} confirmDisabled={!Number.isInteger(reopenInput) || reopenInput < 1 || reopenInput > 1440}
-        onCancel={() => setReopeningQuiz(null)} onConfirm={() => {
-          setBusy(true); setMessage(""); setReopenError("");
-          void api(`/api/admin/quizzes/${reopeningQuiz.id}/reopen`, { method: "POST", body: JSON.stringify({ minutes: reopenInput }) })
-            .then(async () => { setReopeningQuiz(null); await loadQuizzes(); setToast(`测评已重新开放，学生可在 ${reopenInput} 分钟内进入`); })
-            .catch(e => setReopenError((e as Error).message)).finally(() => setBusy(false));
-        }}><label>本次进入窗口（分钟）<input type="number" min={1} max={1440} disabled={busy} value={reopenInput || ""} onChange={e => setReopenInput(Number(e.target.value))} /></label>{reopenError && <div className="error" role="alert">{reopenError}</div>}</ConfirmDialog>}
 
       {editingQuestion && <div className="question-edit-overlay"><form className="card question-edit-dialog" onSubmit={savePreparedQuestion} role="dialog" aria-modal="true" aria-labelledby="question-edit-title">
         <h2 id="question-edit-title">编辑问题</h2><p className="muted">支持 Markdown 与公式。请同步核对英文对照与答案。</p>

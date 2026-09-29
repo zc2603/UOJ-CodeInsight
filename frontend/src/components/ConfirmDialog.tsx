@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef } from "react";
 import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 
 interface Props {
@@ -7,8 +7,6 @@ interface Props {
   confirmLabel: string;
   danger?: boolean;
   busy?: boolean;
-  confirmDisabled?: boolean;
-  children?: ReactNode;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -19,8 +17,6 @@ export function ConfirmDialog({
   confirmLabel,
   danger = false,
   busy = false,
-  confirmDisabled = false,
-  children,
   onCancel,
   onConfirm,
 }: Props) {
@@ -50,7 +46,7 @@ export function ConfirmDialog({
         onMouseDown={event => event.stopPropagation()}
         onKeyDown={event => {
           if (event.key !== "Tab") return;
-          const controls = dialog.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)");
+          const controls = dialog.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
           if (!controls?.length) { event.preventDefault(); return; }
           const first = controls[0], last = controls[controls.length - 1];
           if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
@@ -65,10 +61,9 @@ export function ConfirmDialog({
         </div>
         <h2 id="confirm-dialog-title">{title}</h2>
         <p id="confirm-dialog-description">{description}</p>
-        {children}
         <div className="dialog-actions">
           <button className="secondary" type="button" onClick={onCancel} disabled={busy}>取消</button>
-          <button className={danger ? "danger-solid" : ""} type="button" onClick={onConfirm} disabled={busy || confirmDisabled}>
+          <button className={danger ? "danger-solid" : ""} type="button" onClick={onConfirm} disabled={busy}>
             {busy ? "处理中…" : confirmLabel}
           </button>
         </div>

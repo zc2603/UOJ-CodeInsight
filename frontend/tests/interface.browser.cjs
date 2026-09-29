@@ -203,6 +203,11 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'登录管理端'}).click();await page.getByRole('heading',{name:'全部测评'}).waitFor();
       assert.equal(await page.locator('.quiz-table tbody tr').first().locator('td').nth(4).textContent(),'3.0 分');
       await capture(page,'teacher-list',size);
+      await page.locator('.quiz-table tbody tr').first().getByLabel('更多操作').click();
+      await page.getByRole('button',{name:'重新开放测评',exact:true}).click();
+      await focusTrap(page);
+      assert.equal(await page.getByRole('dialog').locator('input').count(),0);
+      await page.getByRole('dialog').getByRole('button',{name:'取消',exact:true}).click();
       await page.getByRole('button',{name:'设置',exact:true}).click();
       await page.getByRole('heading',{name:'测评默认值',exact:true}).waitFor();
       assert.equal(await page.getByLabel('每问折算分钟数').inputValue(),'4');
@@ -232,7 +237,10 @@ async function focusTrap(page) {
       await page.getByLabel('Contest ID').fill('7');await page.getByRole('button',{name:'导入并预览'}).click();await page.getByText('最多 5 问 · 3 道简答 + 2 道单选').waitFor();
       await capture(page,'teacher-create',size);await page.locator('.assessment-disclosure').nth(1).locator('summary').click();
       assert.equal(await page.locator('.assessment-minute-field input').inputValue(),'4');
-      await page.getByText('进入窗口：45 分钟 · 重新开放：45 分钟 · 调整',{exact:true}).waitFor();
+      assert.equal(await page.locator('.assessment-disclosure').count(),2);
+      assert.equal(await page.getByText(/本场等级规则：/).count(),0);
+      assert.equal(await page.getByText(/进入窗口：45 分钟/).count(),0);
+      await page.getByText('教师开放后 45 分钟内进入',{exact:true}).waitFor();
       await page.getByRole('button',{name:'固定总时长'}).click();await page.locator('.assessment-minute-field input').fill('30');
       await capture(page,'teacher-settings',size);
       await page.getByRole('button',{name:'测评管理',exact:true}).click();await page.locator('.quiz-table').getByRole('button',{name:'查看结果'}).first().click();
@@ -249,7 +257,8 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'完整作答'}).click();await page.getByRole('heading',{name:'逐题成绩',exact:true}).waitFor();
       await page.locator('.material-details summary').first().click();await capture(page,'teacher-attempt',size);
       assert.equal(await page.locator('.material-details').first().locator('.wrapped-code-line').count(),100);
-      assert.equal(await page.locator('.english-details[open]').count(),0);
+      assert.equal(await page.locator('.english-details').count(),0);
+      assert.equal(await page.locator('.question-en').count(),0);
       await page.getByRole('button',{name:'返回测评结果'}).click();
       await page.locator('.result-table tbody tr').filter({hasText:'209900003'}).getByRole('button',{name:'查看详情'}).click();
       await page.getByText('已准备 2 / 2 道题目，共 3 个问题').waitFor();await capture(page,'teacher-prepared',size);

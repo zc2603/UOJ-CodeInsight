@@ -31,7 +31,7 @@ function fixture() {
 function resultData(f) {
   if(f.resultMode==='waiting') return {published:false};
   if(f.resultMode==='absent') return {published:true,participated:false};
-  return {published:true,participated:true,score:5,max_score:6,percent:83.333,submitted_at:'2026-09-29T01:35:00Z',submission_source:'manual',
+  return {published:true,participated:true,score:f.score ?? 5,max_score:f.maxScore ?? 6,percent:83.333,submitted_at:'2026-09-29T01:35:00Z',submission_source:'manual',
     questions:f.questions.map((q,i)=>({...q,answer_text:i===1?'':'每次把当前读到的数加进去，所以它保存了前面所有数的和。',
       choice_id:i===1?'B':null,score:i===2?1:2,reason:'回答已说明累加更新的作用，体现了对局部状态的理解。',
       reference_answer:'每次读入一个数 $a_i$，执行 `sum += a_i`，使 `sum` 保持为已读入数值的总和。',
@@ -163,6 +163,21 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'查看成绩状态'}).click();await page.getByRole('heading',{name:'成绩尚未公布'}).waitFor();
       await capture(page,'student-results-waiting',size);
       f.resultMode='published';await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('heading',{name:'逐题回顾'}).waitFor();
+      assert.equal(await page.locator('.result-total strong').textContent(),'B+');
+      assert.equal(await page.getByText('百分制成绩',{exact:true}).count(),0);
+      assert.equal(await page.locator('.student-score-meta > div').first().locator('strong').textContent(),'5 / 6 分');
+      if(size.width===1366) {
+        for(const [score,grade] of [[0,'D'],[1,'C'],[2,'B'],[3,'B'],[4,'B+'],[5,'B+'],[6,'A'],[7,'A'],[8,'A+'],[9,'A+'],[10,'A+']]) {
+          f.score=score;f.maxScore=10;
+          await page.getByRole('button',{name:'刷新状态'}).click();
+          await page.getByRole('button',{name:'刷新状态'}).waitFor();
+          assert.equal(await page.locator('.result-total strong').textContent(),grade);
+        }
+        f.score=6;f.maxScore=6;await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('button',{name:'刷新状态'}).waitFor();
+        assert.equal(await page.locator('.result-total strong').textContent(),'A','6 / 6 must use raw score, not percentage');
+        await capture(page,'student-results-grade-six',size);
+        f.score=5;delete f.maxScore;await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('button',{name:'刷新状态'}).waitFor();
+      }
       await capture(page,'student-results-published',size);
       await page.getByRole('button',{name:'申请复核',exact:true}).first().click();
       await page.getByLabel('请说明你认为需要重新检查的地方').fill('希望教师核对我的口语表述。');

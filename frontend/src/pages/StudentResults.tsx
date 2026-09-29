@@ -13,8 +13,18 @@ interface ResultQuestion {
 }
 interface Result {
   published: boolean; participated?: boolean; message?: string; score?: number;
-  max_score?: number; percent?: number; submitted_at?: string;
+  max_score?: number; submitted_at?: string;
   submission_source?: string; questions?: ResultQuestion[];
+}
+
+function scoreGrade(score: number | undefined) {
+  if (score === undefined || !Number.isFinite(score) || score < 0) return "—";
+  if (score >= 8) return "A+";
+  if (score >= 6) return "A";
+  if (score >= 4) return "B+";
+  if (score >= 2) return "B";
+  if (score >= 1) return "C";
+  return "D";
 }
 
 export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout: () => void }) {
@@ -76,8 +86,8 @@ export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout:
       <>
         <section className="card student-score-summary" aria-label="成绩概览">
           <div className="student-score-main"><span className="status-pill status-finished"><CheckCircle2 size={14} />成绩已公布</span>
-            <p className="result-total"><strong>{result.score}</strong><span>/ {result.max_score} 分</span></p><span className="muted">本次测评总分</span></div>
-          <div className="student-score-meta"><div><span>百分制成绩</span><strong>{result.percent?.toFixed(1)}<small> / 100</small></strong></div>
+            <p className="result-total"><strong>{scoreGrade(result.score)}</strong></p><span className="muted">本次测评等级</span></div>
+          <div className="student-score-meta"><div><span>本次测评总分</span><strong>{result.score}<small> / {result.max_score} 分</small></strong></div>
             <div><span>完成时间</span><strong className="completion-time">{result.submitted_at ? new Date(result.submitted_at).toLocaleString("zh-CN", { hour12: false }) : "—"}</strong>
               <small>{result.submission_source === "timeout" ? "超时自动交卷" : "手动交卷"}</small></div></div>
         </section>

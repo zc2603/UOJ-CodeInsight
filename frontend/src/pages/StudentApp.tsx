@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpenCheck, CheckCircle2, Clock3, Languages, ListChecks, LoaderCircle,
-  LockKeyhole, Monitor, UserRound,
+  LockKeyhole, Monitor, UserRound, ArrowRight, LogOut,
 } from "lucide-react";
 import md5 from "blueimp-md5";
 import { api } from "../api";
@@ -81,7 +81,8 @@ export function StudentApp({ quizId }: Props) {
 
   async function saveDraft() {
     const current = latest.current;
-    if (current.screen !== "quiz" || !current.question?.question_index || saving.current) return;
+    if (current.screen !== "quiz" || current.question?.assessment_version === "lightweight_v1"
+      || !current.question?.question_index || saving.current) return;
     if (remainingSeconds(current.question.deadline_at, Date.now() + serverOffset.current) === 0) return;
     const key = `${current.question.attempt_id}:${current.question.question_index}:${current.answer}`;
     if (saved.current === key) return;
@@ -111,7 +112,8 @@ export function StudentApp({ quizId }: Props) {
   }, []);
 
   useEffect(() => {
-    if (screen !== "quiz" || secondsLeft !== 0 || closing.current) return;
+    if (screen !== "quiz" || question?.assessment_version === "lightweight_v1"
+      || secondsLeft !== 0 || closing.current) return;
     closing.current = true;
     setMessage("时间已到，正在确认自动交卷…");
     void api<StudentQuestion>("/api/attempt/current").then(data => {
@@ -250,8 +252,8 @@ export function StudentApp({ quizId }: Props) {
       <div className="app-kicker">UOJ 代码理解测评</div>
       <h1>{timedOut ? "时间已到，已自动交卷" : "全部答案已提交"}</h1>
       <p>{timedOut ? "已保存的答案将正常评分，未作答部分计零分。可以关闭当前页面。" : "本次作答已经保存，可以关闭当前页面。"}</p>
-      <button type="button" onClick={() => setScreen("results")}>查看成绩状态</button>
-      <button type="button" onClick={() => void logout()}>退出登录</button>
+      <div className="done-actions"><button type="button" onClick={() => setScreen("results")}>查看成绩状态<ArrowRight size={16} /></button>
+      <button type="button" className="secondary" onClick={() => void logout()}><LogOut size={16} />退出登录</button></div>
     </section></main>
   );
 

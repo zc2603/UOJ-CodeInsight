@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { AlertTriangle, X } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 
 interface Props {
   title: string;
@@ -20,6 +20,12 @@ export function ConfirmDialog({
   onCancel,
   onConfirm,
 }: Props) {
+  const dialog = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.current?.querySelector<HTMLButtonElement>(".dialog-actions .secondary")?.focus();
+    return () => previous?.focus();
+  }, []);
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) onCancel();
@@ -32,19 +38,29 @@ export function ConfirmDialog({
     <div className="dialog-backdrop" role="presentation" onMouseDown={() => !busy && onCancel()}>
       <section
         className="confirm-dialog"
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-description"
         onMouseDown={event => event.stopPropagation()}
+        onKeyDown={event => {
+          if (event.key !== "Tab") return;
+          const controls = dialog.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+          if (!controls?.length) { event.preventDefault(); return; }
+          const first = controls[0], last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        }}
       >
         <button className="icon-button dialog-close" type="button" aria-label="关闭" onClick={onCancel} disabled={busy}>
           <X size={18} />
         </button>
-        <div className={`dialog-symbol ${danger ? "danger-symbol" : "warning-symbol"}`}>
-          <AlertTriangle size={22} />
+        <div className={`dialog-symbol ${danger ? "danger-symbol" : "confirm-symbol"}`}>
+          {danger ? <AlertTriangle size={22} /> : <CheckCircle2 size={22} />}
         </div>
         <h2 id="confirm-dialog-title">{title}</h2>
-        <p>{description}</p>
+        <p id="confirm-dialog-description">{description}</p>
         <div className="dialog-actions">
           <button className="secondary" type="button" onClick={onCancel} disabled={busy}>取消</button>
           <button className={danger ? "danger-solid" : ""} type="button" onClick={onConfirm} disabled={busy}>

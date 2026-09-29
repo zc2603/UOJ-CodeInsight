@@ -703,10 +703,10 @@ export function AdminApp() {
           </div>}
 
           <section className="summary-strip" aria-label="测评概览">
-            <div><span>测评总数</span><strong>{quizzes.length}</strong></div>
-            <div><span>当前开放</span><strong>{quizzes.filter(quiz => quiz.status.toUpperCase() === "PUBLISHED").length}</strong></div>
-            <div><span>学生总数</span><strong>{studentCount ?? "—"}</strong></div>
-            <div><span>已完成作答</span><strong>{totalFinished}</strong></div>
+            <div><span><ClipboardList size={16} />测评总数</span><strong>{quizzes.length}</strong></div>
+            <div><span><BookOpenCheck size={16} />当前开放</span><strong>{quizzes.filter(quiz => quiz.status.toUpperCase() === "PUBLISHED").length}</strong></div>
+            <div><span><Users size={16} />学生总数</span><strong>{studentCount ?? "—"}</strong></div>
+            <div><span><Check size={16} />已完成作答</span><strong>{totalFinished}</strong></div>
           </section>
 
           {quizzes.filter(quiz => quiz.preparation && (quiz.status.toUpperCase() === "DRAFT" || !quiz.preparation.ready)).map(quiz => {
@@ -719,7 +719,8 @@ export function AdminApp() {
             </section>;
           })}
 
-          <section className="card table-card">
+          <section className="card table-card quiz-list-card">
+            <div className="quiz-list-heading"><div><h2>全部测评</h2><p>管理课堂测评，跟进学生作答。</p></div><span className="status-pill">{quizzes.length} 场测评</span></div>
             {quizzes.length ? <table className="quiz-table">
               <thead><tr><th>测评</th><th>Contest</th><th>最后进入时间</th><th>完成进度</th><th>平均分</th><th>操作</th></tr></thead>
               <tbody>{quizzes.map(quiz => {
@@ -817,7 +818,7 @@ export function AdminApp() {
             <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
               <div className="question-title-row"><div className="question-index">问题 {index + 1}</div>{preparedDetail.can_edit && <button className="link" disabled={busy} onClick={() => { setEditingQuestion({...question, grading_points: [...question.grading_points]}); setEditError(""); }}>编辑问题</button>}</div><ProblemStatement className="generated-question" text={question.question} />
                {qualityAuditEnabled && <QualityAudit review={question.quality} />}
-               {question.choices && <ol>{question.choices.map(choice => <li key={choice.id}>{choice.id}. <ProblemStatement text={choice.text} /></li>)}</ol>}
+               {question.choices && <ol className="review-options">{question.choices.map(choice => <li key={choice.id}><strong>{choice.id}</strong><ProblemStatement text={choice.text} /></li>)}</ol>}
               {question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
                <dl><dt>参考答案</dt><dd>{question.reference_answer}</dd>
                  {question.core_idea && <><dt>核心理解目标</dt><dd>{question.core_idea}</dd></>}
@@ -839,10 +840,9 @@ export function AdminApp() {
               <div className="question-list">{group.questions.map((question, index) => <article className="question-detail" key={question.index}>
                 <div className="question-title-row"><div className="question-index">问题 {index + 1}</div><span className="question-score">{attempt.review_required ? "建议 " : ""}{question.score ?? "—"} / 2</span></div>
                  <ProblemStatement className="generated-question" text={question.question} />
-                 {question.choices && <ol>{question.choices.map(choice => <li key={choice.id}>{choice.id}. <ProblemStatement text={choice.text} /></li>)}</ol>}
+                 {question.choices && <ol className="review-options">{question.choices.map(choice => <li key={choice.id}><strong>{choice.id}</strong><ProblemStatement text={choice.text} /></li>)}</ol>}
                 {question.review_required && <p className="review-notice">{attempt.review_required ? "待教师复核" : "曾触发复核"}：{readableReviewReason(question.review_reason)}</p>}
                  {qualityAuditEnabled && <QualityAudit review={question.quality} />}
-                 {question.choices && <ol>{question.choices.map(choice => <li key={choice.id}>{choice.id}. <ProblemStatement text={choice.text} /></li>)}</ol>}
               {question.question_en && <ProblemStatement className="question-en" text={question.question_en} />}
                  <dl><dt>学生回答</dt><dd className="student-answer">{question.choice_id || question.student_answer || "尚未回答"}</dd>
                    <dt>评分原因</dt><dd>{question.reason ?? "—"}</dd>
@@ -852,7 +852,7 @@ export function AdminApp() {
                    {question.correct_choice_id && <><dt>正确选项</dt><dd>{question.correct_choice_id}</dd></>}
                    {question.student_dispute && <><dt>学生异议</dt><dd>{question.dispute_reason || "学生标记题目有疑问"}</dd></>}</dl>
                  {attempt.assessment_version === "lightweight_v1" && <div className="question-score-editor">
-                   <button type="button" onClick={() => { setEditingScoreQuestion(question.id || null);
+                    <button type="button" className="secondary" onClick={() => { setEditingScoreQuestion(question.id || null);
                      setQuestionScore(question.effective_score ?? question.score ?? 0); setQuestionScoreReason(""); }}>
                      {question.review_required ? "处理复核" : "逐题改分"}</button>
                    {editingScoreQuestion === question.id && <div>

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, BookOpenCheck, Check, CheckCircle2, CircleHelp, Clock3, Code2, FileText, Flag, Languages, LoaderCircle } from "lucide-react";
 import { api } from "../api";
+import { createRequestId } from "../requestId";
 import { ProblemStatement } from "../components/ProblemStatement";
 import { CodeBlock } from "../components/CodeBlock";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import type { LightweightDraft, StudentQuestion } from "../types";
 
 type DraftMap = Record<string, LightweightDraft>;
@@ -25,14 +28,16 @@ export function LightweightStudent({ quizId, initial, onDone }: {
   const [conflict, setConflict] = useState<StudentQuestion | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmSubmit, setConfirmSubmit] = useState(false);
   const [showEnglish, setShowEnglish] = useState(false);
   const latest = useRef(drafts);
   latest.current = drafts;
   const revisions = useRef<Record<string, number>>(Object.fromEntries(initial.questions.map(q => [q.id, q.draft.revision])));
   const saved = useRef<Record<string, string>>(Object.fromEntries(initial.questions.map(q => [q.id, JSON.stringify(editable(q.draft))])));
   const inFlight = useRef<Partial<Record<string, Promise<void>>>>({});
-  const submitKey = useRef(crypto.randomUUID());
+  const [submitKey] = useState(createRequestId);
   const [expired, setExpired] = useState(false);
+  const answerPanel = useRef<HTMLElement>(null);
   const current = questions[index];
   const seconds = initial.deadline_at
     ? Math.max(0, Math.ceil((new Date(initial.deadline_at).getTime() - now - serverOffset) / 1000)) : 0;
@@ -125,7 +130,7 @@ export function LightweightStudent({ quizId, initial, onDone }: {
   function navigate(next: number) {
     void save(current.id);
     setIndex(next);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    answerPanel.current?.scrollTo({ top: 0 });
   }
 
   function resolveConflict(keepLocal: boolean) {
@@ -141,8 +146,7 @@ export function LightweightStudent({ quizId, initial, onDone }: {
   }
 
   async function submit() {
-    const unanswered = questions.length - countAnswered;
-    if (!window.confirm(`已答 ${countAnswered} 题，未答 ${unanswered} 题。空题计 0 分，确定交卷吗？`)) return;
+    setConfirmSubmit(false);
     setBusy(true);
     setMessage("");
     try {
@@ -151,7 +155,7 @@ export function LightweightStudent({ quizId, initial, onDone }: {
         ...editable(latest.current[q.id]) }));
       const response = await api<{ source: string }>(`/api/attempt/${initial.attempt_id}/submit`, {
         method: "POST", body: JSON.stringify({ attempt_id: initial.attempt_id,
-          idempotency_key: submitKey.current, drafts: items }),
+          idempotency_key: submitKey, drafts: items }),
       });
       onDone(response.source === "timeout");
     } catch (error) {
@@ -165,55 +169,65 @@ export function LightweightStudent({ quizId, initial, onDone }: {
 
   if (!current) return <main className="center-page"><p>本次测评暂无可作答问题。</p></main>;
   const draft = drafts[current.id];
+  const currentSaveState = saveState[current.id] || "已保存";
+  const problemIds = [...new Set(questions.map(q => q.problem_id))];
+  const typeLabel = { explanation: "代码理解", trace: "执行追踪", modification: "代码修改", boundary: "边界分析" }[current.type] || "代码理解";
   return <main className="quiz-shell lightweight-quiz">
     <header className="quiz-header">
-      <div className="quiz-title"><strong>代码理解测评</strong><span>{current.problem_title}</span></div>
-      <div className="quiz-meta"><span>已答 {countAnswered} / {questions.length}</span>
+      <div className="quiz-title"><span className="quiz-wordmark"><BookOpenCheck size={20} />代码理解测评</span><strong title={current.problem_title}>{current.problem_title}</strong></div>
+      <div className="quiz-meta"><span className="answered-count">已答 <strong>{countAnswered}</strong> / {questions.length}</span>
         <div className={`timer ${seconds <= 60 ? "danger" : seconds <= 300 ? "warning" : ""}`}>
-          <small>整份剩余时间</small>{String(Math.floor(seconds / 60)).padStart(2, "0")}:{String(seconds % 60).padStart(2, "0")}
+          <Clock3 size={17} /><div><small>整份剩余时间</small><strong>{String(Math.floor(seconds / 60)).padStart(2, "0")}:{String(seconds % 60).padStart(2, "0")}</strong></div>
         </div></div>
     </header>
     <nav className="lightweight-nav" aria-label="问题导航">
-      {questions.map((q, i) => <button key={q.id} type="button" className={i === index ? "active" : ""}
-        onClick={() => navigate(i)} aria-current={i === index ? "step" : undefined}>
-        原题 {q.problem_id} · 问题 {q.index}
-        <small>{q.draft.revisit || drafts[q.id].revisit ? "稍后再看" :
-          (q.response_format === "single_choice" ? drafts[q.id].choice_id : drafts[q.id].answer_text.trim()) ? "已作答" : "未作答"}</small>
-      </button>)}
+      <span className="nav-caption">题目导航<small>可自由切换</small></span>
+      <div className="question-nav-groups">{problemIds.map(problemId => <div className="question-nav-group" key={problemId}>
+        <span>原题 {problemId}</span><div>{questions.map((q, i) => {
+          if (q.problem_id !== problemId) return null;
+          const answered = q.response_format === "single_choice" ? !!drafts[q.id].choice_id : !!drafts[q.id].answer_text.trim();
+          return <button key={q.id} type="button" disabled={busy} className={`${i === index ? "active" : ""} ${answered ? "answered" : ""}`}
+            onClick={() => navigate(i)} aria-current={i === index ? "step" : undefined}
+            aria-label={`问题 ${q.index}，${drafts[q.id].revisit ? "稍后再看" : answered ? "已作答" : "未作答"}`}>
+            <span className="nav-question-number">{q.index}</span><span>{q.response_format === "single_choice" ? "单选" : "简答"}</span>
+            {drafts[q.id].revisit ? <Flag size={13} /> : answered ? <Check size={14} /> : <span className="nav-unanswered-dot" />}
+          </button>;
+        })}</div></div>)}</div>
+      <span className="nav-summary">{countAnswered === questions.length ? "已全部作答" : `还有 ${questions.length - countAnswered} 题未作答`}</span>
     </nav>
     <section className="material-panel">
-      <article className="problem-panel"><div className="material-title">原题描述</div>
+      <article className="problem-panel"><div className="material-title"><FileText size={15} />原题描述<span>#{current.problem_id}</span></div>
         <ProblemStatement className="problem-statement" text={current.problem_statement} /></article>
-      <section className="code-panel"><div className="panel-title">本人提交代码 <span>{current.language}</span></div>
+      <section className="code-panel"><div className="panel-title"><Code2 size={16} />本人提交代码 <span>{current.language}</span></div>
         <CodeBlock code={current.source_code} /></section>
     </section>
-    <section className="answer-panel">
-      <div className="question-heading"><span className="question-type">{current.type}</span>
+    <section className="answer-panel" ref={answerPanel} aria-label="作答区域">
+      <div className="question-heading"><span className="question-type">{typeLabel} · {current.response_format === "short_answer" ? "简答" : "单选"}</span>
         <span className="question-sequence">问题 {index + 1} / {questions.length}</span>
         <button type="button" className="text-button language-toggle" onClick={() => setShowEnglish(!showEnglish)}>
-          {showEnglish ? "Hide English" : "Show English"}</button></div>
+          <Languages size={15} />{showEnglish ? "Hide English" : "Show English"}</button></div>
       <ProblemStatement className="generated-question" text={showEnglish ? current.question_en : current.question} />
       {current.response_format === "short_answer" ?
         <label className="answer-label">你的回答
-          <textarea value={draft.answer_text} disabled={seconds === 0 || busy} maxLength={5000}
-            onChange={event => update(current.id, { answer_text: event.target.value })} /></label> :
+          <textarea value={draft.answer_text} disabled={seconds === 0 || busy} maxLength={5000} placeholder="结合左侧代码，用自己的话说明你的理解。"
+            onChange={event => update(current.id, { answer_text: event.target.value })} /><span className="answer-input-hint">可随时修改，交卷后答案将被保存。<small>{draft.answer_text.length} / 5000</small></span></label> :
         <fieldset className="lightweight-choices" disabled={seconds === 0 || busy}>
           <legend>选择一个答案</legend>
           {current.choices?.map(option => <label key={option.id} className={draft.choice_id === option.id ? "selected" : ""}>
             <input type="radio" name={current.id} checked={draft.choice_id === option.id}
               onChange={() => update(current.id, { choice_id: option.id })} />
-            <strong>{option.id}</strong><ProblemStatement text={showEnglish ? option.text_en : option.text} />
+            <strong className="choice-letter">{option.id}</strong><ProblemStatement text={showEnglish ? option.text_en : option.text} />
           </label>)}
           <button type="button" className="text-button" onClick={() => update(current.id, { choice_id: null })}>清空选择</button>
         </fieldset>}
       <div className="lightweight-flags">
-        <label><input type="checkbox" checked={draft.revisit}
-          onChange={event => update(current.id, { revisit: event.target.checked })} /> 稍后再看</label>
-        <label><input type="checkbox" checked={draft.dispute}
+        <label><input type="checkbox" checked={draft.revisit} disabled={busy || seconds === 0}
+          onChange={event => update(current.id, { revisit: event.target.checked })} /><Flag size={15} />稍后再看</label>
+        <label><input type="checkbox" checked={draft.dispute} disabled={busy || seconds === 0}
           onChange={event => update(current.id, { dispute: event.target.checked,
-            dispute_reason: event.target.checked ? draft.dispute_reason : null })} /> 题目有疑问</label>
+            dispute_reason: event.target.checked ? draft.dispute_reason : null })} /><CircleHelp size={15} />题目有疑问</label>
         {draft.dispute && <textarea aria-label="题目疑问说明" placeholder="可填写疑问说明；不填写也会交教师复核"
-          value={draft.dispute_reason || ""} maxLength={1000}
+          value={draft.dispute_reason || ""} disabled={busy || seconds === 0} maxLength={1000}
           onChange={event => update(current.id, { dispute_reason: event.target.value })} />}
       </div>
       {message && <div className="error" role="alert">{message}</div>}
@@ -222,15 +236,19 @@ export function LightweightStudent({ quizId, initial, onDone }: {
         <button type="button" onClick={() => resolveConflict(true)}>保留本页输入</button>
         <button type="button" onClick={() => resolveConflict(false)}>载入服务器草稿</button>
       </div>}
-      <div className="form-footer"><span aria-live="polite">{saveState[current.id] || "已保存"}</span>
+      <div className="form-footer"><span className={`draft-save-status ${currentSaveState.includes("失败") ? "save-failed" : ""}`} aria-live="polite">
+        {currentSaveState === "已保存" ? <CheckCircle2 size={15} /> : currentSaveState === "保存中" ? <LoaderCircle size={15} className="spin" /> : <Clock3 size={15} />}{currentSaveState}</span>
         <div className="lightweight-actions">
-          <button type="button" disabled={index === 0} onClick={() => navigate(index - 1)}>上一题</button>
+          <button type="button" className="secondary" disabled={index === 0 || busy} onClick={() => navigate(index - 1)}><ArrowLeft size={15} />上一题</button>
           {index < questions.length - 1
-            ? <button type="button" onClick={() => navigate(index + 1)}>下一题</button>
-            : <button type="button" disabled={busy || seconds === 0 || !!conflict} onClick={() => void submit()}>
-              检查并交卷</button>}
+            ? <button type="button" disabled={busy} onClick={() => navigate(index + 1)}>下一题<ArrowRight size={15} /></button>
+            : <button type="button" disabled={busy || seconds === 0 || !!conflict} onClick={() => setConfirmSubmit(true)}>
+              <CheckCircle2 size={16} />检查并交卷</button>}
         </div>
       </div>
     </section>
+    {confirmSubmit && <ConfirmDialog title="确认提交本次测评？"
+      description={`共 ${questions.length} 个问题，已答 ${countAnswered} 题，未答 ${questions.length - countAnswered} 题。${questions.length > countAnswered ? "未作答的题目计 0 分。" : ""}交卷后不能再修改答案。`}
+      confirmLabel="确认交卷" busy={busy} onCancel={() => setConfirmSubmit(false)} onConfirm={() => void submit()} />}
   </main>;
 }

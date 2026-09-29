@@ -412,7 +412,7 @@ async def prepared_questions(quiz_id: uuid.UUID, student_number: str, db: AsyncS
         if job.state != "succeeded":
             continue
         from app.schemas.llm import LightweightGenerationResult
-        generated = (LightweightGenerationResult if job.prompt_version == "question_generator_lightweight_v1"
+        generated = (LightweightGenerationResult if job.prompt_version in LIGHTWEIGHT_GENERATOR_VERSIONS
             else QuestionGenerationResult).model_validate(job.result_json)
         for item in generated.questions:
             questions.append(dict(job_id=str(job.id), local_index=item.index, revision=prepared_revision(job.result_json), quality=quality_presentation(job, item.index) if get_settings().quality_audit_enabled else None, index=len(questions) + 1, type=item.type, question=item.question,

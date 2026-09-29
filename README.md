@@ -12,6 +12,8 @@
 
 ## 开发验证
 
+2026-09-29 修复未开始学生详情接口对新版 Prompt v2 的识别，保留 v1 和旧版测评兼容；后端全套 195 项测试通过，包含新版详情的题目数量、单选答案和只读检查。
+
 后端使用 Python 3.12、FastAPI、SQLAlchemy、Alembic 和 PostgreSQL；前端使用 React、TypeScript、Vite。Mock 测试不调用真实模型。
 
 ```sh

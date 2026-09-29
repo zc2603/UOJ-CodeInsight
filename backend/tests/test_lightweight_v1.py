@@ -115,6 +115,53 @@ async def test_fixed_duration_and_invalid_choice_configuration(db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("version", ["question_generator_lightweight_v1", "question_generator_lightweight_v2"])
+async def test_teacher_prepared_details_support_all_lightweight_prompt_versions(db, version):
+    import httpx
+    from sqlalchemy import func
+    from app.database import get_db
+    from app.main import app
+    from app.security import create_token
+
+    quiz = await prepared_quiz(db)
+    jobs = (await db.scalars(select(GenerationJob).where(GenerationJob.quiz_id == quiz.id))).all()
+    before = {job.id: job.result_json for job in jobs}
+    for job in jobs:
+        job.prompt_version = version
+    await db.commit()
+
+    async def test_db():
+        yield db
+
+    app.dependency_overrides[get_db] = test_db
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            path = f"/api/admin/quizzes/{quiz.id}/students/231250002/prepared-questions"
+            assert (await client.get(path)).status_code == 401
+            client.cookies.set("admin_session", create_token(str(uuid.uuid4()), "admin", username="teacher"))
+            for student, count in [("231250001", 5), ("231250002", 3), ("231250003", 1)]:
+                response = await client.get(path.replace("231250002", student))
+                assert response.status_code == 200
+                data = response.json()
+                assert data["can_edit"] is True
+                assert len(data["questions"]) == count
+                assert [q["index"] for q in data["questions"]] == list(range(1, count + 1))
+                for question in data["questions"]:
+                    assert question["reference_answer"] and question["revision"]
+                    if question["response_format"] == "single_choice":
+                        assert len(question["choices"]) == 4
+                        assert question["correct_choice_id"] in {c["id"] for c in question["choices"]}
+                    else:
+                        assert question["core_idea"]
+            assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
+            for job in jobs:
+                await db.refresh(job)
+                assert job.result_json == before[job.id]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", ["question_generator_lightweight_v1", "question_generator_lightweight_v2"])
 async def test_new_protocol_never_enters_legacy_quality_audit(db, monkeypatch, version):
     monkeypatch.setenv("QUALITY_AUDIT_ENABLED", "true")
     get_settings.cache_clear()

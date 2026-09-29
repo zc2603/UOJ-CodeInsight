@@ -193,7 +193,8 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
             )
         )
     ).scalars().all()
-    preparation_jobs = (await db.execute(select(GenerationJob.quiz_id, GenerationJob.participant_id, GenerationJob.round_no, GenerationJob.state))).all()
+    preparation_jobs = (await db.execute(select(GenerationJob.quiz_id, GenerationJob.participant_id,
+        GenerationJob.round_no, GenerationJob.state, GenerationJob.result_json))).all()
     jobs_by_quiz = {}
     for job in preparation_jobs:
         jobs_by_quiz.setdefault(job.quiz_id, []).append(job)

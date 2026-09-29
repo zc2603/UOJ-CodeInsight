@@ -160,6 +160,11 @@ async def test_teacher_prepared_details_support_all_lightweight_prompt_versions(
             path = f"/api/admin/quizzes/{quiz.id}/students/231250002/prepared-questions"
             assert (await client.get(path)).status_code == 401
             client.cookies.set("admin_session", create_token(str(uuid.uuid4()), "admin", username="teacher"))
+            listing = await client.get("/api/admin/quizzes")
+            assert listing.status_code == 200
+            preparation = next(row for row in listing.json() if row["id"] == str(quiz.id))["preparation"]
+            assert preparation["completed"] == 6
+            assert preparation["completed_questions"] == 9  # 5 + 3 + 1 across the three students.
             for student, count in [("231250001", 5), ("231250002", 3), ("231250003", 1)]:
                 response = await client.get(path.replace("231250002", student))
                 assert response.status_code == 200

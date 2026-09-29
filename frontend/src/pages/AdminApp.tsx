@@ -7,6 +7,7 @@ import {
 import { api } from "../api";
 import { ProblemStatement } from "../components/ProblemStatement";
 import { QualityAudit } from "../components/QualityAudit";
+import { AssessmentSetup } from "../components/AssessmentSetup";
 import { CodeBlock } from "../components/CodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { AppealPanel, AppealReviewDialog, type AppealItem } from "../components/AppealPanel";
@@ -115,7 +116,7 @@ export function AdminApp() {
   const [qualityAuditEnabled, setQualityAuditEnabled] = useState(false);
   const [choiceIds, setChoiceIds] = useState<number[]>([]);
   const [timeMode, setTimeMode] = useState<"per_question" | "fixed">("per_question");
-  const [perQuestionMinutes, setPerQuestionMinutes] = useState<4 | 5>(5);
+  const [perQuestionMinutes, setPerQuestionMinutes] = useState(5);
   const [fixedMinutes, setFixedMinutes] = useState(25);
   const [createdCode, setCreatedCode] = useState("");
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
@@ -307,6 +308,14 @@ export function AdminApp() {
   }
 
   async function performCreateQuiz(allowBeforeCutoff: boolean) {
+    if (lightweightEnabled) {
+      const input = timeMode === "fixed" ? fixedMinutes : perQuestionMinutes;
+      const duration = timeMode === "fixed" ? input : ((preview?.problems.length ?? 0) + choiceIds.length) * input;
+      if (!Number.isInteger(input) || input < 1 || duration > 180) {
+        setMessage("请输入正整数分钟，并确保总时长不超过 180 分钟。");
+        return;
+      }
+    }
     setBusy(true);
     setMessage("");
     try {
@@ -315,8 +324,8 @@ export function AdminApp() {
         body: JSON.stringify({
           contest_id: Number(contestId), roster_text: rosterText, show_score_after_finish: false, allow_before_cutoff: allowBeforeCutoff,
           ...(lightweightEnabled ? { assessment_version: "lightweight_v1", choice_problem_ids: choiceIds,
-            time_mode: timeMode, minutes_per_question: perQuestionMinutes,
-            duration_minutes: timeMode === "fixed" ? fixedMinutes : undefined } : {}),
+            time_mode: timeMode,
+            ...(timeMode === "fixed" ? { duration_minutes: fixedMinutes } : { minutes_per_question: perQuestionMinutes }) } : {}),
         }),
       });
       setCreatedCode(data.quiz_code);
@@ -706,7 +715,7 @@ export function AdminApp() {
               <div className="preparation-heading"><div><span className="eyebrow">课前准备</span><h2>{quiz.name}</h2></div><span className={`status-pill status-${p.ready ? "finished" : p.failed ? "grading-error" : "preparing"}`}>{p.ready ? "已就绪" : p.total === 0 ? "无有效提交" : p.cancelled && !p.running && !p.queued ? "已终止" : p.failed ? "部分出题失败" : "正在出题"}</span></div>
               <div className="preparation-counts"><div><strong>{p.completed}<small> / {p.total}</small></strong><span>已完成出题的有效题目</span></div><div><strong>{p.students_ready}<small> / {p.students_total}</small></strong><span>问题全部就绪的学生</span></div></div>
               <progress max={p.total || 1} value={p.completed} aria-label="已完成出题的有效题目" />
-              <div className="preparation-footer"><span>{p.ready ? `已准备 ${p.completed * 2} 个问题，可以开放测评。` : p.total === 0 ? "本场没有可用于出题的提交，请核对 Contest 后重新创建。" : `出题中 ${p.running} · 等待 ${p.queued} · 失败 ${p.failed} · 已终止 ${p.cancelled}（每道有效题目生成 2 问）`}</span><div className="inline-actions">{p.running + p.queued > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "stop")}>终止出题</button>}{p.failed + p.cancelled > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "retry")}>重试未完成题目</button>}{quiz.status.toUpperCase() === "DRAFT" && <button disabled={busy || (!p.ready && !(p.students_ready > 0 && p.failed + p.cancelled > 0))} onClick={() => preparationAction(quiz)}>开放测评</button>}</div></div>
+              <div className="preparation-footer"><span>{p.ready ? `已准备 ${p.completed_questions} 个问题，可以开放测评。` : p.total === 0 ? "本场没有可用于出题的提交，请核对 Contest 后重新创建。" : `出题中 ${p.running} · 等待 ${p.queued} · 失败 ${p.failed} · 已终止 ${p.cancelled} · 已准备 ${p.completed_questions} 问`}</span><div className="inline-actions">{p.running + p.queued > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "stop")}>终止出题</button>}{p.failed + p.cancelled > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "retry")}>重试未完成题目</button>}{quiz.status.toUpperCase() === "DRAFT" && <button disabled={busy || (!p.ready && !(p.students_ready > 0 && p.failed + p.cancelled > 0))} onClick={() => preparationAction(quiz)}>开放测评</button>}</div></div>
             </section>;
           })}
 
@@ -745,32 +754,9 @@ export function AdminApp() {
                   {!preview.cutoff_reached && <div className="warning"><CircleAlert size={17} /><div><strong>Contest 尚未结束</strong><span>提前创建将采用学生当前的提交。如需包含后续提交，请在比赛结束后创建。</span></div></div>}
                   <div className="stats"><div><strong>{preview.problems.length}</strong><span>比赛题目</span></div><div><strong>{preview.numeric_student_accounts}</strong><span>学生人数</span></div><div><strong>{preview.students_with_eligible_problem}</strong><span>可参与人数</span></div><div><strong>{preview.parser_errors.length}</strong><span>导入异常</span></div></div>
                   <div className="problem-chip-list">{preview.problems.map(problem => <span key={problem.problem_id}><b>#{problem.problem_id}</b>{problem.title}</span>)}</div>
-                  {lightweightEnabled && <section className="assessment-setup">
-                    <h3>测评内容</h3>
-                    <p className="muted">按 problem_id 升序排列；三题比赛中最大 ID 默认仅简答。每道原题都参与抽查。</p>
-                    {preview.problems.map(problem => <label key={problem.problem_id} className="assessment-problem">
-                      <span>第 {problem.display_order} 题 · {problem.title}</span>
-                      <select value={choiceIds.includes(problem.problem_id) ? "two" : "one"}
-                        onChange={event => setChoiceIds(old => event.target.value === "two"
-                          ? [...old.filter(id => id !== problem.problem_id), problem.problem_id]
-                          : old.filter(id => id !== problem.problem_id))}>
-                        <option value="two">简答 + 单选</option><option value="one">仅简答</option>
-                      </select>
-                    </label>)}
-                    <h3>个人作答时长</h3>
-                    <p className="muted">时间可在各题之间自由分配。</p>
-                    <label><input type="radio" checked={timeMode === "per_question"} onChange={() => setTimeMode("per_question")} />
-                      按题量计算 · 每问
-                      <select value={perQuestionMinutes} onChange={event => setPerQuestionMinutes(Number(event.target.value) as 4 | 5)}>
-                        <option value={5}>5 分钟</option><option value={4}>4 分钟</option>
-                      </select></label>
-                    <label><input type="radio" checked={timeMode === "fixed"} onChange={() => setTimeMode("fixed")} />
-                      固定总时长 <input type="number" min={1} max={180} value={fixedMinutes}
-                        onChange={event => setFixedMinutes(Number(event.target.value))} /> 分钟</label>
-                    <p>全部原题都有有效提交时：{preview.problems.length + choiceIds.length} 个问题 ·
-                      {timeMode === "fixed" ? fixedMinutes : (preview.problems.length + choiceIds.length) * perQuestionMinutes} 分钟。
-                      学生缺少有效提交时，实际题数可能更少。</p>
-                  </section>}
+                  {lightweightEnabled && <AssessmentSetup problems={preview.problems} choiceIds={choiceIds} onChoices={setChoiceIds}
+                    timeMode={timeMode} onTimeMode={setTimeMode} perQuestionMinutes={perQuestionMinutes}
+                    onPerQuestionMinutes={setPerQuestionMinutes} fixedMinutes={fixedMinutes} onFixedMinutes={setFixedMinutes} />}
                   {!lightweightEnabled && <p className="muted">新版自由作答协议仍在质量回归前关闭创建入口；当前创建沿用历史测评规则。</p>}
                   {preview.parser_errors.length > 0 && <details className="parser-errors"><summary>查看 {preview.parser_errors.length} 条导入异常</summary><ul>{preview.parser_errors.map((error, index) => <li key={`${error.student_number}-${error.problem_id}-${index}`}>{error.student_number} · 题目 {error.problem_id}：{error.error}</li>)}</ul></details>}
                   <section className="roster-panel" aria-label="参与范围">

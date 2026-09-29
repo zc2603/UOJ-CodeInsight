@@ -44,7 +44,9 @@ def summarize(jobs):
     current = [j for j in jobs if j.round_no == latest[j.participant_id]]
     counts = {state: sum(j.state == state for j in current) for state in ("queued", "running", "succeeded", "failed", "cancelled")}
     ready = sum(all(j.state == "succeeded" for j in current if j.participant_id == pid) for pid in latest)
-    return dict(total=len(current), completed=counts["succeeded"], running=counts["running"],
+    completed_questions = sum(len((getattr(j, "result_json", None) or {}).get("questions", []))
+        for j in current if j.state == "succeeded")
+    return dict(total=len(current), completed=counts["succeeded"], completed_questions=completed_questions, running=counts["running"],
         queued=counts["queued"], failed=counts["failed"], cancelled=counts["cancelled"], students_total=len(latest), students_ready=ready,
         ready=bool(current) and counts["succeeded"] == len(current))
 

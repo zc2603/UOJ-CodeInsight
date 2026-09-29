@@ -57,6 +57,7 @@ export interface LightweightQuestion {
 }
 
 export interface PreparationProgress {
+  completed_questions: number;
   total: number; completed: number; running: number; queued: number; failed: number; cancelled: number;
   students_total: number; students_ready: number; ready: boolean;
 }

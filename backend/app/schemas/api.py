@@ -71,7 +71,7 @@ class QuizCreateRequest(BaseModel):
     assessment_version: Literal["legacy", "lightweight_v1"] | None = None
     choice_problem_ids: list[int] | None = None
     time_mode: Literal["per_question", "fixed"] = "per_question"
-    minutes_per_question: Literal[4, 5] = 5
+    minutes_per_question: int = Field(default=5, ge=1, le=180)
 
     @model_validator(mode="after")
     def validate_time(self):
@@ -96,6 +96,7 @@ class QuizOpenRequest(BaseModel):
 
 
 class PreparationProgress(BaseModel):
+    completed_questions: int = 0
     cancelled: int = 0
     total: int
     completed: int

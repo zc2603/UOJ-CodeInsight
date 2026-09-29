@@ -114,6 +114,28 @@ async def test_fixed_duration_and_invalid_choice_configuration(db):
 
 
 @pytest.mark.asyncio
+async def test_custom_minutes_are_frozen_and_progress_counts_generated_questions(db):
+    from app.schemas.api import PreparationProgress
+    quiz = await prepared_quiz(db, QuizCreateRequest(contest_id=7, minutes_per_question=7))
+    jobs = (await db.scalars(select(GenerationJob).where(GenerationJob.quiz_id == quiz.id))).all()
+    from app.models import QuizParticipant
+    participant = await db.scalar(select(QuizParticipant).where(
+        QuizParticipant.quiz_id == quiz.id, QuizParticipant.student_number == "231250002"))
+    summary = PreparationProgress.model_validate(generation_service.summarize(
+        [job for job in jobs if job.participant_id == participant.id]))
+    assert summary.completed == 2 and summary.completed_questions == 3
+    view = await start_attempt(db, Settings(), MockLLMProvider(), quiz_id=quiz.id,
+        student_number="231250002", session_id="custom-time")
+    assert view.question_count == 3 and view.duration_minutes == 21
+
+
+@pytest.mark.parametrize("minutes", [0, -1, 181, 2.5])
+def test_custom_minutes_reject_invalid_values(minutes):
+    with pytest.raises(ValueError):
+        QuizCreateRequest(contest_id=7, minutes_per_question=minutes)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("version", ["question_generator_lightweight_v1", "question_generator_lightweight_v2"])
 async def test_teacher_prepared_details_support_all_lightweight_prompt_versions(db, version):
     import httpx

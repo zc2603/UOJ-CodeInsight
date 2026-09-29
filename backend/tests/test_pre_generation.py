@@ -51,7 +51,7 @@ async def test_create_atomically_enqueues_only_eligible_submissions(db):
     quiz, _ = await persist_quiz(db, bundle, QuizCreateRequest(contest_id=7))
     assert quiz.status == QuizStatus.DRAFT and quiz.pre_generate
     p = await queue.progress(db, quiz.id)
-    assert p == dict(total=2, completed=0, queued=2, running=0, failed=0, cancelled=0, students_total=1, students_ready=0, ready=False)
+    assert p == dict(total=2, completed=0, completed_questions=0, queued=2, running=0, failed=0, cancelled=0, students_total=1, students_ready=0, ready=False)
     assert await db.scalar(select(func.count()).select_from(Attempt)) == 0
 
 
@@ -302,6 +302,16 @@ def test_preparation_progress_for_65_students_three_problems():
     jobs.extend(SimpleNamespace(participant_id=0, round_no=2, state="queued") for _ in range(3))
     result = queue.summarize(jobs)
     assert result["total"] == 195 and result["completed"] == 81 and result["students_ready"] == 27
+
+
+def test_progress_counts_only_successful_questions_in_latest_round():
+    from types import SimpleNamespace
+    def job(round_no, state, count):
+        return SimpleNamespace(participant_id=1, round_no=round_no, state=state,
+            result_json={"questions": [{} for _ in range(count)]})
+    assert queue.summarize([job(1, "succeeded", 2), job(1, "succeeded", 2)])["completed_questions"] == 4
+    result = queue.summarize([job(1, "succeeded", 2), job(2, "succeeded", 1), job(2, "queued", 2)])
+    assert result["completed_questions"] == 1 and result["completed"] == 1
 
 
 def test_additive_migration_preserves_old_quizzes_and_initializes_queue():

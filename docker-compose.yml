@@ -19,7 +19,10 @@ services:
   migrate:
     image: uoj-quiz-backend:local
     build: ./backend
-    env_file: ${APP_ENV_FILE:-.env}
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+      - path: ${OPENAI_ENV_FILE:-.env.openai.local}
+        required: false
     environment:
       LLM_MODEL: deepseek-flash
       LLM_TIMEOUT_SECONDS: "360"
@@ -46,7 +49,10 @@ services:
     image: uoj-quiz-backend:local
     build: ./backend
     restart: unless-stopped
-    env_file: ${APP_ENV_FILE:-.env}
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+      - path: ${OPENAI_ENV_FILE:-.env.openai.local}
+        required: false
     environment:
       LLM_MODEL: deepseek-flash
       LLM_TIMEOUT_SECONDS: "360"

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -165,7 +165,16 @@ async def student_result(db, quiz_id: uuid.UUID, student_number: str) -> dict:
         "submission_source": attempt.submission_source or ("timeout" if attempt.timed_out else "manual"),
         "score": score, "grade": grade_for(score, quiz.grade_bands), "max_score": len(attempt.questions) * 2,
         "percent": score / (len(attempt.questions) * 2) * 100 if attempt.questions else None,
+        "appeal_deadline": appeal_deadline(quiz),
+        "appeals_open": appeal_deadline(quiz) is None or datetime.now(timezone.utc) < appeal_deadline(quiz),
+        "appeal_prompt": quiz.appeal_prompt or "请说明你认为需要重新检查的地方",
         "questions": questions}
+
+
+def appeal_deadline(quiz):
+    if quiz.published_at is None or quiz.appeal_window_days is None:
+        return None
+    return ensure_utc(quiz.published_at) + timedelta(days=quiz.appeal_window_days)
 
 
 async def request_appeal(db, quiz_id: uuid.UUID, student_number: str, question_id: uuid.UUID,
@@ -194,6 +203,9 @@ async def request_appeal(db, quiz_id: uuid.UUID, student_number: str, question_i
         if existing.request_key == request_key:
             return {"id": str(existing.id), "state": existing.state}
         raise HTTPException(409, "本题当前成绩版本已有申请")
+    deadline = appeal_deadline(quiz)
+    if deadline is not None and datetime.now(timezone.utc) >= deadline:
+        raise HTTPException(403, "本场测评的申诉期已结束")
     pending = await db.scalar(select(Appeal.id).where(Appeal.question_id == question.id,
         Appeal.state == "pending").limit(1))
     if pending is not None:

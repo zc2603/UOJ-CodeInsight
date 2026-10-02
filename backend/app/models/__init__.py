@@ -1,6 +1,7 @@
 from app.models.entities import (
     GenerationControl, GenerationJob, GenerationRun,
     AdminUser,
+    RuntimeConfiguration, RuntimeConfigurationAudit, RuntimeWorker,
     Answer,
     AnswerDraft, ReviewIssue, ScoreAudit, Appeal,
     Attempt,
@@ -21,6 +22,7 @@ __all__ = [
     "GenerationJob",
     "GenerationRun",
     "AdminUser",
+    "RuntimeConfiguration", "RuntimeConfigurationAudit", "RuntimeWorker",
     "Answer",
     "AnswerDraft", "ReviewIssue", "ScoreAudit", "Appeal",
     "Attempt",

@@ -264,19 +264,21 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         while network_failures < 3 and schema_failures < 3:
             try:
                 async with self.semaphore:
+                    payload = {
+                        "model": self.model_name,
+                        "messages": [{"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}],
+                        "response_format": {"type": "json_object"},
+                    }
+                    if self.settings.llm_api_style == "openai":
+                        payload.update(max_completion_tokens=self.settings.llm_max_tokens,
+                            reasoning_effort="xhigh" if self.settings.llm_reasoning_effort == "max" else self.settings.llm_reasoning_effort)
+                    else:
+                        payload.update(thinking={"type": "enabled"},
+                            reasoning_effort=self.settings.llm_reasoning_effort, max_tokens=self.settings.llm_max_tokens)
                     response = await self.client.post(
                         "chat/completions",
-                        json={
-                            "model": self.model_name,
-                            "messages": [
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_prompt},
-                            ],
-                            "thinking": {"type": "enabled"},
-                            "reasoning_effort": self.settings.llm_reasoning_effort,
-                            "max_tokens": self.settings.llm_max_tokens,
-                            "response_format": {"type": "json_object"},
-                        },
+                        json=payload,
                     )
                 response.raise_for_status()
                 body = response.json()

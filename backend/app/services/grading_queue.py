@@ -95,13 +95,18 @@ async def run_grading(factory, provider, identity, timeout_seconds=1200):
         await asyncio.gather(grading, heartbeat, return_exceptions=True)
 
 
-async def grading_worker(factory, settings, provider):
+async def grading_worker(factory, settings, provider, runtime=None):
     while True:
         try:
+            current = await runtime.snapshot("grading") if runtime else settings
             async with factory() as db:
                 identity = await claim_grading(db)
             if identity:
-                await run_grading(factory, provider, identity, settings.grading_task_timeout_seconds)
+                if runtime:
+                    async with runtime.provider(current) as task_provider:
+                        await run_grading(factory, task_provider, identity, current.grading_task_timeout_seconds)
+                else:
+                    await run_grading(factory, provider, identity, current.grading_task_timeout_seconds)
                 continue
         except Exception as exc:
             logger.error("Durable grading failed (%s)", type(exc).__name__)

@@ -21,7 +21,7 @@ from app.security import hash_secret, verify_secret
 
 
 @pytest.mark.asyncio
-async def test_student_schema_never_leaks_future_questions_or_references() -> None:
+async def test_student_schema_never_leaks_future_questions_or_references(monkeypatch) -> None:
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,
@@ -30,6 +30,13 @@ async def test_student_schema_never_leaks_future_questions_or_references() -> No
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    import asyncio
+    from app.models import RuntimeConfiguration
+    async def idle(*args):
+        await asyncio.Event().wait()
+    monkeypatch.setattr("app.main.SessionLocal", factory)
+    for name in ("maintain_attempts", "generation_worker", "grading_worker"):
+        monkeypatch.setattr("app.main." + name, idle)
     async with factory() as db:
         now = datetime.now(timezone.utc)
         quiz = Quiz(
@@ -44,7 +51,7 @@ async def test_student_schema_never_leaks_future_questions_or_references() -> No
             show_score_after_finish=True,
         )
         admin = AdminUser(username="teacher", password_hash=hash_secret("long-test-password"))
-        db.add_all([quiz, admin])
+        db.add_all([quiz, admin, RuntimeConfiguration(id=1, revision=0)])
         await db.flush()
         problem = QuizProblemSnapshot(
             quiz_id=quiz.id, uoj_problem_id=1, title="P", statement="Statement"

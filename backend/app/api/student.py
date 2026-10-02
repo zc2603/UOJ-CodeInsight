@@ -200,6 +200,12 @@ async def start(
 ):
     if principal.quiz_id != quiz_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Session 不属于该 Quiz")
+    runtime = getattr(request.app.state, "runtime", None)
+    if runtime is not None:
+        current = await runtime.snapshot("generation")
+        async with runtime.provider(current) as provider:
+            return await start_attempt(db, current, provider, quiz_id=quiz_id,
+                student_number=principal.student_number, session_id=principal.session_id)
     return await start_attempt(
         db,
         get_settings(),

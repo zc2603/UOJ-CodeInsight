@@ -122,6 +122,8 @@ async def persist_quiz(
         entry_minutes=request.entry_minutes,
         reopen_minutes=request.reopen_minutes,
         grade_bands=[b.model_dump() for b in defaults.grade_bands],
+        appeal_window_days=defaults.appeal_window_days,
+        appeal_prompt=defaults.appeal_prompt,
         time_mode="per_question" if version == "legacy" else request.time_mode,
         submission_cutoff=bundle.cutoff.astimezone(timezone.utc),
         status=QuizStatus.DRAFT,

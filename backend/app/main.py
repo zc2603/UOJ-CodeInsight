@@ -14,13 +14,17 @@ from app.services.grading_queue import grading_worker
 from app.services.quality_audit import worker as quality_worker
 from app.integrations.uoj import UOJRepository, UOJSubmissionArchiveClient
 from app.services.import_service import ImportService
-from app.services.llm_provider import create_llm_provider
+from app.services.runtime_manager import RuntimeManager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    app.state.llm_provider = create_llm_provider(settings)
+    runtime = RuntimeManager(SessionLocal, settings)
+    await runtime.start()
+    app.state.runtime = runtime
+    configuration_watch = asyncio.create_task(runtime.watch())
+    app.state.llm_provider = None  # RuntimeManager creates task-bound clients.
     app.state.uoj_repository = None
     app.state.import_service = None
     if settings.uoj_database_url:
@@ -29,14 +33,16 @@ async def lifespan(app: FastAPI):
         app.state.uoj_repository = repository
         app.state.import_service = ImportService(settings, repository, archive_client)
     maintenance = asyncio.create_task(maintain_attempts(SessionLocal, settings))
-    graders = [asyncio.create_task(grading_worker(SessionLocal, settings, app.state.llm_provider))
+    graders = [asyncio.create_task(grading_worker(SessionLocal, settings, app.state.llm_provider, runtime))
         for _ in range(settings.grading_workers)]
-    generators = [asyncio.create_task(generation_worker(SessionLocal, settings, app.state.llm_provider))
+    generators = [asyncio.create_task(generation_worker(SessionLocal, settings, app.state.llm_provider, runtime))
         for _ in range(settings.generation_workers)]
     quality = asyncio.create_task(quality_worker(SessionLocal, settings)) if settings.quality_audit_enabled else None
     try:
         yield
     finally:
+        configuration_watch.cancel()
+        await asyncio.gather(configuration_watch, return_exceptions=True)
         if quality is not None:
             quality.cancel()
             await asyncio.gather(quality, return_exceptions=True)
@@ -54,6 +60,7 @@ async def lifespan(app: FastAPI):
         close = getattr(app.state.llm_provider, "close", None)
         if close is not None:
             await close()
+        app.state.runtime = None
 
 
 settings = get_settings()

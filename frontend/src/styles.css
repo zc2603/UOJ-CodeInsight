@@ -1082,3 +1082,4 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .wrapped-code-line code { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
 .wrapped-line-number { user-select: none; color: #83958a; text-align: right; padding-right: 1em; }
 .wrapped-line-number::before { content: attr(data-line); }
+.runtime-endpoint { overflow-wrap: anywhere; }

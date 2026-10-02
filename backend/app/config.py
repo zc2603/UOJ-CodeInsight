@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-flash"
+    llm_api_style: Literal["deepseek", "openai"] = "deepseek"
+    openai_api_key: str = ""
+    openai_base_url: str = "http://127.0.0.1:6780/v1"
     llm_reasoning_effort: Literal["low", "high", "max"] = "max"
     llm_timeout_seconds: float = 360.0
     llm_max_tokens: int = 100_000

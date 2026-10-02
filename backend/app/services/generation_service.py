@@ -322,13 +322,19 @@ async def run_claim(factory, settings, provider, identity):
         await asyncio.gather(generation, renew, return_exceptions=True)
 
 
-async def generation_worker(factory, settings, provider):
+async def generation_worker(factory, settings, provider, runtime=None):
     while True:
         try:
+            current = await runtime.snapshot("generation") if runtime else settings
             async with factory() as db:
-                identity = await claim(db, settings, provider.model_name)
+                model = ("mock" if current.llm_provider == "mock" else current.llm_model) if runtime else provider.model_name
+                identity = await claim(db, current, model)
             if identity:
-                await run_claim(factory, settings, provider, identity)
+                if runtime:
+                    async with runtime.provider(current) as task_provider:
+                        await run_claim(factory, current, task_provider, identity)
+                else:
+                    await run_claim(factory, current, provider, identity)
                 continue
         except Exception as exc:
             logger.error("Generation worker retrying after %s", type(exc).__name__)

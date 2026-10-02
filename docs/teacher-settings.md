@@ -30,6 +30,8 @@
 
 ## 接口与迁移
 
+第二阶段增加申诉规则和平台模型/任务参数，见[运行参数与申诉规则](runtime-settings.md)。教师个人默认值与平台共用参数分别保存。
+
 - `GET /api/admin/settings`：当前账号设置、revision、系统初始值；首次读取不写库。
 - `PUT /api/admin/settings`：`{expected_revision, settings}`，锁定账号并校验版本；其他账号不可指定。
 - 创建预览应用当前账号题型模板。创建请求可携带 `expected_settings_revision`，过期返回 409。

@@ -28,13 +28,16 @@ function fixture() {
         assessment_version:'lightweight_v1',scores_published:false,status:'DRAFT',participant_count:1,finished_count:0,average_score:null,
         start_time:'2026-09-29T01:00:00Z',end_time:'2026-09-29T02:00:00Z'}]};
 }
-const settingsDefaults = { entry_minutes:30,reopen_minutes:null,time_mode:'per_question',minutes_per_question:4,fixed_minutes:25,
+const settingsDefaults = { appeal_window_days:null,appeal_prompt:'请说明你认为需要重新检查的地方',entry_minutes:30,reopen_minutes:null,time_mode:'per_question',minutes_per_question:4,fixed_minutes:25,
   question_template:'standard',grade_bands:[{label:'A+',minimum:9},{label:'A',minimum:7},{label:'B+',minimum:5},{label:'B',minimum:3},{label:'C',minimum:1},{label:'D',minimum:0}],
   result_filter:'all',result_sort:'student',result_columns:['score','grade','confidence','timeout'],code_font_size:13,code_wrap:false,english_expanded:true };
+const runtimeDefaults = { generation_service:'deepseek',grading_service:'deepseek',deepseek_model:'deepseek-flash',openai_model:'gpt-5.6-sol',
+  reasoning_effort:'max',max_tokens:100000,request_timeout_seconds:360,generation_timeout_seconds:1200,generation_max_attempts:3,generation_global_concurrency:80,grading_timeout_seconds:1200 };
 function resultData(f) {
   if(f.resultMode==='waiting') return {published:false};
   if(f.resultMode==='absent') return {published:true,participated:false};
-  return {published:true,participated:true,grade:settingsDefaults.grade_bands.find(b=>(f.score??5)>=b.minimum).label,score:f.score ?? 5,max_score:f.maxScore ?? 6,percent:83.333,submitted_at:'2026-09-29T01:35:00Z',submission_source:'manual',
+  return {published:true,participated:true,appeal_deadline:f.appealDeadline||null,appeals_open:!f.appealClosed,appeal_prompt:f.appealPrompt||settingsDefaults.appeal_prompt,
+    grade:settingsDefaults.grade_bands.find(b=>(f.score??5)>=b.minimum).label,score:f.score ?? 5,max_score:f.maxScore ?? 6,percent:83.333,submitted_at:'2026-09-29T01:35:00Z',submission_source:'manual',
     questions:f.questions.map((q,i)=>({...q,answer_text:i===1?'':'每次把当前读到的数加进去，所以它保存了前面所有数的和。',
       choice_id:i===1?'B':null,score:i===2?1:2,reason:'回答已说明累加更新的作用，体现了对局部状态的理解。',
       reference_answer:'每次读入一个数 $a_i$，执行 `sum += a_i`，使 `sum` 保持为已读入数值的总和。',
@@ -89,6 +92,17 @@ async function wire(page,f,errors) {
       data=f.quizzes;
     } else if(p==='/api/admin/overview') data={student_count:3};
     else if(p==='/api/admin/features') data={lightweight_creation_enabled:true,quality_audit_enabled:false};
+    else if(p==='/api/admin/runtime-settings') {
+      if(req.method()==='PUT') {
+        const body=req.postDataJSON();
+        if(body.expected_revision!==(f.runtimeRevision||0)) return route.fulfill({status:409,json:{detail:'平台运行参数已被其他教师更新，请重新加载'}});
+        f.runtimeOptions=body.settings; f.runtimeRevision=(f.runtimeRevision||0)+1;
+      }
+      data={settings:f.runtimeOptions||runtimeDefaults,defaults:runtimeDefaults,revision:f.runtimeRevision||0,
+        services:{deepseek:{base_url:'https://deepseek.test',configured:true,models:['deepseek-flash','deepseek-pro']},
+          openai:{base_url:'https://openai.test/v1',configured:true,models:['gpt-5.6-sol','gpt-6-astra','gpt-6.1-sol']}},
+        runtime:{active_workers:4,loaded_workers:4,poll_seconds:3,mode:'openai-compatible',request_concurrency_per_process:25,generation_workers_per_process:20,grading_workers_per_process:4}};
+    }
     else if(p==='/api/admin/settings') {
       if(req.method()==='PUT') {
         const body=req.postDataJSON();
@@ -195,6 +209,14 @@ async function focusTrap(page) {
       await page.getByLabel('请说明你认为需要重新检查的地方').fill('希望教师核对我的口语表述。');
       await capture(page,'student-appeal',size);await page.getByRole('button',{name:'提交申请'}).click();
       await page.getByText('复核申请 · 处理中',{exact:true}).waitFor();assert.ok(await page.getByRole('button',{name:'申请复核',exact:true}).first().isDisabled());
+      f.appealDeadline=new Date(Date.now()-1000).toISOString();f.appealClosed=true;
+      await page.getByRole('button',{name:'刷新状态'}).click();await page.getByText('申诉期已结束',{exact:true}).first().waitFor();
+      assert.ok(await page.getByRole('button',{name:'申请复核',exact:true}).nth(1).isDisabled());
+      f.appealDeadline=new Date(Date.now()+86400000).toISOString();f.appealClosed=false;f.appealPrompt='请结合代码说明复核理由';
+      await page.getByRole('button',{name:'刷新状态'}).click();await page.getByText(/申请复核截止：/).first().waitFor();
+      await page.getByRole('button',{name:'申请复核',exact:true}).nth(1).click();
+      await page.getByLabel('请结合代码说明复核理由').waitFor();
+      await capture(page,'student-appeal-window',size);
       f.resultMode='absent';await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('heading',{name:'本次测评未参加'}).waitFor();await capture(page,'student-absent',size);
       f.resultMode='error';await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('alert').filter({hasText:'合成网络错误'}).waitFor();await capture(page,'student-result-error',size);
 
@@ -233,6 +255,30 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'重新加载',exact:true}).click();
       await page.waitForFunction(()=>!document.querySelector('[role="alert"]'));
       assert.equal(await page.getByLabel('首次开放进入窗口（分钟）').inputValue(),'45');
+      await page.getByLabel('默认申诉期限',{exact:true}).selectOption('days');
+      await page.getByLabel('公布后天数',{exact:true}).fill('3');
+      await page.getByLabel('申诉填写提示语',{exact:true}).fill('请结合代码说明复核理由');
+      await page.getByRole('button',{name:'保存本组',exact:true}).nth(3).click();
+      await page.getByRole('status').filter({hasText:'本组设置已保存'}).waitFor();
+      assert.equal(f.settings.appeal_window_days,3);
+      await page.getByLabel('DeepSeek 模型',{exact:true}).waitFor();
+      assert.equal(await page.getByLabel('备用 OpenAI 模型',{exact:true}).inputValue(),'gpt-5.6-sol');
+      await page.getByLabel('DeepSeek 模型',{exact:true}).selectOption('deepseek-pro');
+      await page.getByLabel('备用 OpenAI 模型',{exact:true}).selectOption('gpt-6.1-sol');
+      await page.getByText(/接入核验时该名称未出现在服务方模型列表中/).waitFor();
+      await page.getByLabel('备用 OpenAI 模型',{exact:true}).selectOption('gpt-6-astra');
+      await page.getByLabel('出题使用服务',{exact:true}).selectOption('openai');
+      await page.getByLabel('全局出题并发上限',{exact:true}).fill('10');
+      await page.getByRole('button',{name:'保存平台参数',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'平台参数已保存'}).waitFor();
+      assert.equal(f.runtimeOptions.generation_service,'openai');assert.equal(f.runtimeOptions.grading_service,'deepseek');
+      assert.equal(f.runtimeOptions.generation_global_concurrency,10);
+      await capture(page,'teacher-runtime-settings',size);
+      f.runtimeRevision++;
+      await page.getByRole('button',{name:'保存平台参数',exact:true}).click();
+      await page.getByRole('alert').filter({hasText:'平台运行参数已被其他教师更新'}).waitFor();
+      await page.getByRole('button',{name:'重新加载运行参数',exact:true}).click();
+      await page.waitForFunction(()=>!document.querySelector('.runtime-settings [role="alert"]'));
       await page.getByRole('button',{name:'创建测评',exact:true}).first().click();await page.getByRole('heading',{name:'导入比赛'}).waitFor();
       await page.getByLabel('Contest ID').fill('7');await page.getByRole('button',{name:'导入并预览'}).click();await page.getByText('最多 5 问 · 3 道简答 + 2 道单选').waitFor();
       await capture(page,'teacher-create',size);await page.locator('.assessment-disclosure').nth(1).locator('summary').click();

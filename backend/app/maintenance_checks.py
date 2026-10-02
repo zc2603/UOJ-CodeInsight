@@ -22,6 +22,7 @@ def configured(value: str) -> str:
 
 def check_config() -> int:
     settings = get_settings()
+    print("configuration_scope=deployment_defaults; runtime settings are reported by smoke")
     print(f"environment={settings.environment}")
     print(f"cookie_secure={str(settings.cookie_secure).lower()}")
     print(f"llm_provider={settings.llm_provider}")
@@ -46,6 +47,8 @@ def check_config() -> int:
     print(f"attempt_maintenance_interval_seconds={settings.attempt_maintenance_interval_seconds}")
     print(f"attempt_preparing_timeout_seconds={settings.attempt_preparing_timeout_seconds}")
     print(f"llm_api_key={configured(settings.llm_api_key)}")
+    print(f"openai_api_key={configured(settings.openai_api_key)}")
+    print(f"openai_base_url={settings.openai_base_url}")
     print(f"uoj_database={configured(settings.uoj_database_url)}")
     print(f"uoj_judger_credentials={configured(settings.uoj_judger_name)}/{configured(settings.uoj_judger_password)}")
     print(f"uoj_password_auth={str(settings.uoj_password_auth_enabled).lower()}")
@@ -105,7 +108,14 @@ async def check_preparation_schema():
                 print("quality_response_length=" + str(len(raw)))
         await db.execute(text("SELECT settings_json, settings_revision FROM admin_users LIMIT 0"))
         await db.execute(text("SELECT entry_minutes, reopen_minutes, grade_bands FROM quizzes LIMIT 0"))
-        assert revision == "0008_teacher_settings" and control == 1
+        await db.execute(text("SELECT appeal_window_days, appeal_prompt FROM quizzes LIMIT 0"))
+        await db.execute(text("SELECT revision, values_json FROM runtime_configuration WHERE id = 1"))
+        await db.execute(text("SELECT revision, seen_at FROM runtime_workers LIMIT 0"))
+        assert revision == "0009_runtime_and_appeals" and control == 1
+        from app.services.runtime_settings import runtime_response
+        runtime = await runtime_response(db, get_settings())
+        print("runtime_settings=" + json.dumps({"revision": runtime["revision"],
+            "settings": runtime["settings"].model_dump(), "runtime": runtime["runtime"]}))
         print(f"preparation_schema=ok revision={revision}")
         print("preparation_jobs=" + (",".join(f"{state}:{count}" for state, count in counts) or "empty"))
         from app.generation_diagnostics import latest_generation

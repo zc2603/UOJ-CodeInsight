@@ -2,7 +2,7 @@
 from typing import Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from sqlalchemy import select
 
 from app.models import AdminUser
@@ -35,6 +35,15 @@ class TeacherSettings(BaseModel):
     code_font_size: int = Field(default=13, ge=11, le=22, strict=True)
     code_wrap: bool = False
     english_expanded: bool = True
+    appeal_window_days: int | None = Field(default=None, ge=1, le=365, strict=True)
+    appeal_prompt: str = Field(default="请说明你认为需要重新检查的地方", min_length=1, max_length=500)
+
+    @field_validator("appeal_prompt")
+    @classmethod
+    def validate_appeal_prompt(cls, value):
+        if not value.strip():
+            raise ValueError("申诉提示语不能为空")
+        return value.strip()
 
     @model_validator(mode="after")
     def validate_bands(self):
@@ -67,10 +76,12 @@ async def save_settings(db, user_id, payload):
         raise HTTPException(401, "教师账号不可用")
     if (user.settings_revision or 0) != payload.expected_revision:
         raise HTTPException(409, "设置已在其他页面更新，请重新加载后再保存")
-    user.settings_json = payload.settings.model_dump(mode="json")
+    merged = {**(user.settings_json or {}), **payload.settings.model_dump(mode="json", exclude_unset=True)}
+    effective = TeacherSettings.model_validate(merged)
+    user.settings_json = effective.model_dump(mode="json")
     user.settings_revision = payload.expected_revision + 1
     await db.commit()
-    return {"settings": payload.settings, "revision": user.settings_revision}
+    return {"settings": effective, "revision": user.settings_revision}
 
 
 def grade_for(score, bands=None):

@@ -91,6 +91,8 @@ class Quiz(Base):
     entry_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     reopen_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     grade_bands: Mapped[list | None] = mapped_column(JSON)
+    appeal_window_days: Mapped[int | None] = mapped_column(Integer)
+    appeal_prompt: Mapped[str | None] = mapped_column(Text)
     time_mode: Mapped[str] = mapped_column(String(20), default="per_question", server_default="per_question")
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_by: Mapped[str | None] = mapped_column(String(80))
@@ -107,6 +109,31 @@ class Quiz(Base):
     participants: Mapped[list[QuizParticipant]] = relationship(
         back_populates="quiz", cascade="all, delete-orphan"
     )
+
+
+class RuntimeConfiguration(Base):
+    __tablename__ = "runtime_configuration"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    values_json: Mapped[dict | None] = mapped_column(JSON)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_by: Mapped[str | None] = mapped_column(String(80))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RuntimeConfigurationAudit(Base):
+    __tablename__ = "runtime_configuration_audits"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    revision: Mapped[int] = mapped_column(Integer, unique=True)
+    actor: Mapped[str] = mapped_column(String(80))
+    values_json: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RuntimeWorker(Base):
+    __tablename__ = "runtime_workers"
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class QuizProblemSnapshot(Base):

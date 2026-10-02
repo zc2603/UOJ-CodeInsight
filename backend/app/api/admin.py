@@ -55,9 +55,21 @@ from app.services.publication import publish as publish_scores, score_question, 
 from app.services.llm_provider import LIGHTWEIGHT_GENERATOR_VERSIONS
 from app.services.teacher_settings import TeacherSettings, SettingsUpdate, load_settings, save_settings, grade_for, choice_defaults
 from app.schemas.api import QuizReopenRequest
+from app.services.runtime_settings import RuntimeUpdate, runtime_response, save_runtime
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.get("/runtime-settings")
+async def platform_runtime_settings(principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    await load_settings(db, principal.user_id)
+    return await runtime_response(db, get_settings())
+
+
+@router.put("/runtime-settings")
+async def update_platform_runtime_settings(payload: RuntimeUpdate, principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    return await save_runtime(db, get_settings(), principal, payload)
 
 
 @router.get("/settings")

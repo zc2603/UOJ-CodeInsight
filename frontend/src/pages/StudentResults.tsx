@@ -12,6 +12,7 @@ interface ResultQuestion {
   reference_answer?: string | null; correct_choice_id?: string | null; score_version: number; appeals: Appeal[];
 }
 interface Result {
+  appeal_deadline?: string | null; appeals_open?: boolean; appeal_prompt?: string;
   grade?: string | null;
   published: boolean; participated?: boolean; message?: string; score?: number;
   max_score?: number; submitted_at?: string;
@@ -26,6 +27,12 @@ export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout:
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState("");
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!result?.appeal_deadline) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [result?.appeal_deadline]);
   async function refresh() {
     setRefreshing(true);
     try {
@@ -50,6 +57,7 @@ export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout:
     finally { setBusy(false); }
   }
   const hasScore = result?.published && result.participated !== false;
+  const appealsOpen = result?.appeals_open !== false && (!result?.appeal_deadline || now < new Date(result.appeal_deadline).getTime());
   return <main className={`result-page ${hasScore ? "result-page-published" : "result-page-status"}`}>
     <div className="student-page-bar">
       <div className="student-page-brand"><span className="brand-mark"><BookOpenCheck size={22} /></span>
@@ -98,11 +106,11 @@ export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout:
             <section className="result-feedback"><h4><MessageSquareText size={16} />评分反馈</h4><p>{q.reason || "暂无评分说明"}</p></section>
             {q.appeals.map(a => <div key={a.id} className="student-appeal-record"><span className={`status-pill ${a.state === "pending" ? "appeal-pending" : "status-finished"}`}>复核申请 · {a.state === "pending" ? "处理中" : "已处理"}</span>
               <p className="preserve-text">{a.reason}</p>{a.resolution && <div><strong>教师回复</strong><p className="preserve-text">{a.resolution}</p></div>}</div>)}
-            <div className="result-question-actions"><span>对本题评分有疑问？可向教师申请复核。</span>
-              <button type="button" className="secondary" disabled={busy || q.appeals.some(a => a.state === "pending" || a.question_score_version === q.score_version)}
+            <div className="result-question-actions"><span>{!appealsOpen ? "申诉期已结束" : result.appeal_deadline ? `申请复核截止：${new Date(result.appeal_deadline).toLocaleString("zh-CN", { hour12: false })}` : "对本题评分有疑问？可向教师申请复核。"}</span>
+              <button type="button" className="secondary" disabled={busy || !appealsOpen || q.appeals.some(a => a.state === "pending" || a.question_score_version === q.score_version)}
                 aria-expanded={appealFor === q.id} onClick={() => { setAppealFor(q.id); setReason(""); }}>申请复核</button></div>
-            {appealFor === q.id && <form className="appeal-form" onSubmit={event => { event.preventDefault(); if (!busy && reason.trim()) void submitAppeal(q.id); }}>
-              <label>请说明你认为需要重新检查的地方
+            {appealFor === q.id && appealsOpen && <form className="appeal-form" onSubmit={event => { event.preventDefault(); if (!busy && reason.trim()) void submitAppeal(q.id); }}>
+              <label>{result.appeal_prompt || "请说明你认为需要重新检查的地方"}
                 <textarea autoFocus required disabled={busy} value={reason} maxLength={1000} placeholder="可以结合你的回答，说明希望教师核对的内容。" onChange={event => setReason(event.target.value)} />
               </label>
               <div className="appeal-form-actions"><small>{reason.length} / 1000</small><button type="button" className="secondary" disabled={busy} onClick={() => setAppealFor(null)}>取消</button>

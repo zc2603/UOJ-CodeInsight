@@ -1,4 +1,6 @@
 export interface TeacherSettings {
+  appeal_window_days: number | null;
+  appeal_prompt: string;
   entry_minutes: number;
   reopen_minutes: number | null;
   time_mode: "per_question" | "fixed";
@@ -17,6 +19,7 @@ export interface TeacherSettings {
 export interface SettingsResponse { settings: TeacherSettings; revision: number; defaults?: TeacherSettings }
 
 export const initialSettings: TeacherSettings = {
+  appeal_window_days: null, appeal_prompt: "请说明你认为需要重新检查的地方",
   entry_minutes: 30, reopen_minutes: null, time_mode: "per_question", minutes_per_question: 4,
   fixed_minutes: 25, question_template: "standard",
   grade_bands: [{ label: "A+", minimum: 9 }, { label: "A", minimum: 7 }, { label: "B+", minimum: 5 },

@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Attempt, AttemptStatus, QuizParticipant, GenerationControl, GenerationJob, GenerationRun, Quiz, QuizStatus, SubmissionSnapshot, QuizProblemSnapshot
 from app.services.llm_provider import GENERATOR_VERSION, LIGHTWEIGHT_GENERATOR_VERSION, LIGHTWEIGHT_GENERATOR_VERSIONS
-from app.services.question_policy import allocated_kind
+from app.services.question_policy import SECOND_KINDS, allocated_kind
 from app.time_utils import ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -22,15 +22,27 @@ async def enqueue(db, snapshots, round_no=1):
     if not snapshots:
         return
     quiz = await db.get(Quiz, snapshots[0].quiz_id)
-    choice_ids = []
+    second_kinds = {}
     if quiz.assessment_version == "lightweight_v1":
-        choice_ids = (await db.execute(select(SubmissionSnapshot.id)
+        choices = (await db.execute(select(SubmissionSnapshot.participant_id, SubmissionSnapshot.id)
             .join(QuizProblemSnapshot, QuizProblemSnapshot.id == SubmissionSnapshot.problem_snapshot_id)
             .where(SubmissionSnapshot.quiz_id == quiz.id, QuizProblemSnapshot.include_choice.is_(True),
-                SubmissionSnapshot.uoj_score > 0))).scalars().all()
-    rank = {str(value): i for i, value in enumerate(sorted(choice_ids, key=str))}
+                SubmissionSnapshot.uoj_score > 0))).all()
+        # Keep each student's choices contiguous while balancing the whole quiz.
+        # Always rank all frozen snapshots, including during subset regeneration.
+        ordered = sorted(choices, key=lambda row: (str(row.participant_id), str(row.id)))
+        second_kinds = {snapshot_id: SECOND_KINDS[index % len(SECOND_KINDS)]
+            for index, (_, snapshot_id) in enumerate(ordered)}
+        # Existing quizzes retain their saved allocation, including the old policy.
+        # Reuse the latest round rather than changing kinds when the policy changes.
+        existing = (await db.execute(select(GenerationJob.submission_snapshot_id, GenerationJob.second_kind)
+            .where(GenerationJob.quiz_id == quiz.id).order_by(GenerationJob.round_no.desc()))).all()
+        frozen = {}
+        for snapshot_id, kind in existing:
+            frozen.setdefault(snapshot_id, kind)
+        second_kinds.update(frozen)
     for snapshot in snapshots:
-        second = ("trace", "boundary", "modification")[rank[str(snapshot.id)] % 3] if str(snapshot.id) in rank else None
+        second = second_kinds.get(snapshot.id)
         db.add(GenerationJob(quiz_id=snapshot.quiz_id, participant_id=snapshot.participant_id,
             submission_snapshot_id=snapshot.id, round_no=round_no,
             second_kind=second, prompt_version=LIGHTWEIGHT_GENERATOR_VERSION if quiz.assessment_version == "lightweight_v1" else GENERATOR_VERSION))

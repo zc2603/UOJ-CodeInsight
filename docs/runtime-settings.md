@@ -16,17 +16,17 @@
 | 服务 | 初始模型 | 可选模型 |
 |---|---|---|
 | DeepSeek API | `deepseek-flash` | `deepseek-flash`、`deepseek-pro` |
-| OpenAI-compatible API | `gpt-5.6-sol` | `gpt-5.6-sol`、`gpt-6-astra`、`gpt-6.1-sol` |
+| OpenAI API | `gpt-5.6-sol` | `gpt-5.6-sol`、`gpt-6-astra`、`gpt-6.1-sol` |
 
-出题和评分可以分别选择服务，使用该服务当前选定的模型；两者初始均使用 DeepSeek。切换由教师保存设置触发，不在错误时自动跨服务调用。`gpt-6.1-sol` 按要求保留，接入时未出现在提供方模型列表中；模型列表查询不代表付费生成/评分质量验证。
+出题和评分可以分别选择服务，使用该服务当前选定的模型；两者初始均使用 DeepSeek。切换由教师保存设置触发，不在错误时自动跨服务调用。`gpt-6.1-sol` 已由用户于 2026-10-02 确认可正常使用，设置页不再显示模型列表缺失提示。
 
-服务地址和凭据由部署环境提供。页面只展示地址、模型选项及凭据是否配置，不提供或返回 API Key。DeepSeek 使用 `LLM_BASE_URL` / `LLM_API_KEY`；备用接口使用 `OPENAI_BASE_URL` / `OPENAI_API_KEY`。
+服务地址和凭据由部署环境提供。页面只展示地址、模型选项及凭据是否配置，不提供或返回 API Key。DeepSeek 使用 `LLM_BASE_URL` / `LLM_API_KEY`；OpenAI API 使用 `OPENAI_BASE_URL` / `OPENAI_API_KEY`。
 
 DeepSeek 保持 `thinking=enabled`，使用 `max_tokens` 和 `low/high/max` 推理强度。OpenAI-compatible 使用 `max_completion_tokens`，不发送 DeepSeek 的 `thinking` 扩展；推理强度按原值发送，`max` 对应 `max`。页面选项仅显示 low/high/max，不附加括号说明或映射提示。两者均保持 Chat Completions JSON 协议和已有有界重试。
 
 ## 保存时自动测试模型（2026-10-02）
 
-保存平台参数时，若修改任一服务的模型选项（包括备用模型），或出题/评分切换到另一服务，系统会自动询问一次“1 + 1 等于多少”，检查 JSON 回答是否为 2，无需再次确认费用。
+保存平台参数时，若修改任一服务的模型选项（包括当前未用于出题或评分的服务），或出题/评分切换到另一服务，系统会自动询问一次“1 + 1 等于多少”，检查 JSON 回答是否为 2，无需再次确认费用。
 
 - 每个变化服务只测一次，同一模型同时用于出题和评分时去重；每次保存最多两次 HTTP 请求。只改时限、并发、推理强度等参数不触发。
 - 测试沿用对应服务的认证和协议字段，最多 20 秒、输出至多 2048 token（若平台上限更低则取更低值），不自动重试。
@@ -58,7 +58,7 @@ DeepSeek 保持 `thinking=enabled`，使用 `max_tokens` 和 `low/high/max` 推�
 ## 部署
 
 - 迁移 `0009_runtime_and_appeals`：Quiz 增加申诉规则；新增平台运行配置、修改记录和进程加载状态表。迁移不回填旧申诉截止日期。
-- Compose 在原环境文件之外，可选读取被 Git 忽略的 `.env.openai.local`，或 `OPENAI_ENV_FILE` 指定的文件（需支持可选 env_file 的 Compose 版本）。此文件可仅包含备用服务地址与密钥，应使用受限读取权限，独立于源码发布包管理。
+- Compose 在原环境文件之外，可选读取被 Git 忽略的 `.env.openai.local`，或 `OPENAI_ENV_FILE` 指定的文件（需支持可选 env_file 的 Compose 版本）。此文件可仅包含 OpenAI API 地址与密钥，应使用受限读取权限，独立于源码发布包管理。
 - `config` 输出部署初始值和凭据是否配置；`smoke` 额外输出数据库保存的运行参数、版本和在线加载状态。
 - 迁移后需要支持新配置的后端。排查切换问题时先看保存版本和进程回执，再查看对应任务记录中的模型；不要用环境初始值推断任务实际选型。
 
@@ -76,6 +76,6 @@ PostgreSQL 专项：在新建的本地 `quiz_runtime_synthetic_*` 空库先运�
 
 258 项离线测试通过，涵盖测试触发/去重、请求预算、两种协议、错误脱敏、无自动重试、失败结果持久化、旧版本结果隔离和未完成状态。独立 PostgreSQL 验证空库迁移及 0009→0010 保留旧审计记录、过期保存不重复测试、测试期间新保存可完成且旧结果不覆盖新配置。三尺寸合成浏览器验证成功与失败反馈以及无二次确认弹窗。
 
-按用户授权进行了一次隔离的真实合成保存，备用 `gpt-5.6-sol` 发出 1 次 HTTP，简单问答通过，约 1.9 秒；没有变更生产运行配置或使用真实学生数据。该验证仅说明当次基本问答成功。
+按用户授权进行了一次隔离的真实合成保存，OpenAI API 的 `gpt-5.6-sol` 发出 1 次 HTTP，简单问答通过，约 1.9 秒；没有变更生产运行配置或使用真实学生数据。该验证仅说明当次基本问答成功。
 
 新增 PostgreSQL 专项使用 `MODEL_PROBE_TEST_DATABASE_URL`，数据库须为新建的 localhost `quiz_probe_synthetic_*` 空库；迁移至 head 后运行 `pytest tests/test_model_probe_postgres.py`。

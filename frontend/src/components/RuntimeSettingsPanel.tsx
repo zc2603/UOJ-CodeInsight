@@ -75,7 +75,6 @@ export function RuntimeSettingsPanel() {
         <p>{data.services[service].configured ? "API Key 已配置" : "API Key 未配置"}</p>
         <label>{service === "deepseek" ? "DeepSeek 模型" : "OpenAI 模型"}<select disabled={busy} aria-label={service === "deepseek" ? "DeepSeek 模型" : "OpenAI 模型"} value={draft[`${service}_model`]} onChange={e => change(`${service}_model`, e.target.value)}>
           {data.services[service].models.map(model => <option key={model} value={model}>{model}</option>)}</select></label>
-        {service === "openai" && draft.openai_model === "gpt-6.1-sol" && <p className="muted">保留指定模型选项；接入核验时该名称未出现在服务方模型列表中。</p>}
       </div>)}</div>
       <div className="settings-grid">{(["generation_service", "grading_service"] as const).map(key => <label key={key}>{key === "generation_service" ? "出题使用服务" : "评分使用服务"}
         <select disabled={busy} aria-label={key === "generation_service" ? "出题使用服务" : "评分使用服务"} value={draft[key]} onChange={e => change(key, e.target.value as Service)}>

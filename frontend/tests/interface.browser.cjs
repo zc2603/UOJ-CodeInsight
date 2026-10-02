@@ -270,7 +270,6 @@ async function focusTrap(page) {
       assert.equal(await page.getByLabel('OpenAI 模型',{exact:true}).inputValue(),'gpt-5.6-sol');
       await page.getByLabel('DeepSeek 模型',{exact:true}).selectOption('deepseek-pro');
       await page.getByLabel('OpenAI 模型',{exact:true}).selectOption('gpt-6.1-sol');
-      await page.getByText(/接入核验时该名称未出现在服务方模型列表中/).waitFor();
       await page.getByLabel('OpenAI 模型',{exact:true}).selectOption('gpt-6-astra');
       await page.getByLabel('出题使用服务',{exact:true}).selectOption('openai');
       await page.getByLabel('全局出题并发上限',{exact:true}).fill('10');

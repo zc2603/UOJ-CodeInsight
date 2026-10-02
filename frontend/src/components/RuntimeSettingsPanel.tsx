@@ -70,18 +70,18 @@ export function RuntimeSettingsPanel() {
     {error && <div className="error" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
     {!data || !draft ? <button className="secondary" disabled={busy} onClick={() => void reload()}>加载运行参数</button> : <>
       <div className="settings-grid">{(["deepseek", "openai"] as Service[]).map(service => <div key={service}>
-        <h3>{service === "deepseek" ? "DeepSeek API" : "备用 OpenAI API"}</h3>
+        <h3>{service === "deepseek" ? "DeepSeek API" : "OpenAI API"}</h3>
         <p className="muted runtime-endpoint">{data.services[service].base_url}</p>
         <p>{data.services[service].configured ? "API Key 已配置" : "API Key 未配置"}</p>
-        <label>{service === "deepseek" ? "DeepSeek 模型" : "备用 OpenAI 模型"}<select disabled={busy} aria-label={service === "deepseek" ? "DeepSeek 模型" : "备用 OpenAI 模型"} value={draft[`${service}_model`]} onChange={e => change(`${service}_model`, e.target.value)}>
+        <label>{service === "deepseek" ? "DeepSeek 模型" : "OpenAI 模型"}<select disabled={busy} aria-label={service === "deepseek" ? "DeepSeek 模型" : "OpenAI 模型"} value={draft[`${service}_model`]} onChange={e => change(`${service}_model`, e.target.value)}>
           {data.services[service].models.map(model => <option key={model} value={model}>{model}</option>)}</select></label>
         {service === "openai" && draft.openai_model === "gpt-6.1-sol" && <p className="muted">保留指定模型选项；接入核验时该名称未出现在服务方模型列表中。</p>}
       </div>)}</div>
       <div className="settings-grid">{(["generation_service", "grading_service"] as const).map(key => <label key={key}>{key === "generation_service" ? "出题使用服务" : "评分使用服务"}
         <select disabled={busy} aria-label={key === "generation_service" ? "出题使用服务" : "评分使用服务"} value={draft[key]} onChange={e => change(key, e.target.value as Service)}>
-          <option value="deepseek">DeepSeek API</option><option value="openai">备用 OpenAI API</option></select></label>)}
+          <option value="deepseek">DeepSeek API</option><option value="openai">OpenAI API</option></select></label>)}
         <label>推理强度<select disabled={busy} value={draft.reasoning_effort} onChange={e => change("reasoning_effort", e.target.value as Options["reasoning_effort"])}>
-          <option value="max">max（充分推理）</option><option value="high">high</option><option value="low">low</option></select><small>OpenAI 的 max 对应 xhigh；DeepSeek 保持 thinking 开启。</small></label>
+          <option value="max">max</option><option value="high">high</option><option value="low">low</option></select></label>
         {numeric.map(([key, label, min, max]) => <label key={key}>{label}<input disabled={busy} type="number" min={min} max={max} step={1} value={draft[key] as number}
           onChange={e => change(key, Number(e.target.value))} /></label>)}
       </div>

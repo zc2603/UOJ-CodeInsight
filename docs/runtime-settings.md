@@ -16,13 +16,13 @@
 | 服务 | 初始模型 | 可选模型 |
 |---|---|---|
 | DeepSeek API | `deepseek-flash` | `deepseek-flash`、`deepseek-pro` |
-| 备用 OpenAI-compatible API | `gpt-5.6-sol` | `gpt-5.6-sol`、`gpt-6-astra`、`gpt-6.1-sol` |
+| OpenAI-compatible API | `gpt-5.6-sol` | `gpt-5.6-sol`、`gpt-6-astra`、`gpt-6.1-sol` |
 
 出题和评分可以分别选择服务，使用该服务当前选定的模型；两者初始均使用 DeepSeek。切换由教师保存设置触发，不在错误时自动跨服务调用。`gpt-6.1-sol` 按要求保留，接入时未出现在提供方模型列表中；模型列表查询不代表付费生成/评分质量验证。
 
 服务地址和凭据由部署环境提供。页面只展示地址、模型选项及凭据是否配置，不提供或返回 API Key。DeepSeek 使用 `LLM_BASE_URL` / `LLM_API_KEY`；备用接口使用 `OPENAI_BASE_URL` / `OPENAI_API_KEY`。
 
-DeepSeek 保持 `thinking=enabled`，使用 `max_tokens` 和 `low/high/max` 推理强度。OpenAI-compatible 使用 `max_completion_tokens`，不发送 DeepSeek 的 `thinking` 扩展；`max` 映射为 `xhigh`。两者均保持 Chat Completions JSON 协议和已有有界重试；实际提供方兼容性需要另外批准真实调用验证。
+DeepSeek 保持 `thinking=enabled`，使用 `max_tokens` 和 `low/high/max` 推理强度。OpenAI-compatible 使用 `max_completion_tokens`，不发送 DeepSeek 的 `thinking` 扩展；推理强度按原值发送，`max` 对应 `max`。页面选项仅显示 low/high/max，不附加括号说明或映射提示。两者均保持 Chat Completions JSON 协议和已有有界重试。
 
 ## 保存时自动测试模型（2026-10-02）
 

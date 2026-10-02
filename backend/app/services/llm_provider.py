@@ -249,7 +249,7 @@ def chat_payload(settings: Settings, system_prompt: str, user_prompt: str, *, ma
     tokens = settings.llm_max_tokens if max_tokens is None else max_tokens
     if settings.llm_api_style == "openai":
         payload.update(max_completion_tokens=tokens,
-            reasoning_effort="xhigh" if settings.llm_reasoning_effort == "max" else settings.llm_reasoning_effort)
+            reasoning_effort=settings.llm_reasoning_effort)
     else:
         payload.update(thinking={"type": "enabled"}, reasoning_effort=settings.llm_reasoning_effort, max_tokens=tokens)
     return payload

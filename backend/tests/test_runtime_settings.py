@@ -103,7 +103,7 @@ async def test_provider_protocols_and_credential_routing(service, model):
             assert payload["max_tokens"] == 100000 and "max_completion_tokens" not in payload
         else:
             assert "thinking" not in payload and "max_tokens" not in payload
-            assert payload["reasoning_effort"] == "xhigh" and payload["max_completion_tokens"] == 100000
+            assert payload["reasoning_effort"] == "max" and payload["max_completion_tokens"] == 100000
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"value": 1}'}}]})
     provider.client = httpx.AsyncClient(transport=httpx.MockTransport(respond),
         base_url=provider.settings.llm_base_url.rstrip("/") + "/", headers={"Authorization": "Bearer " + provider.settings.llm_api_key})

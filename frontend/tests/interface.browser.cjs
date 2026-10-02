@@ -267,11 +267,11 @@ async function focusTrap(page) {
       await page.getByRole('status').filter({hasText:'本组设置已保存'}).waitFor();
       assert.equal(f.settings.appeal_window_days,3);
       await page.getByLabel('DeepSeek 模型',{exact:true}).waitFor();
-      assert.equal(await page.getByLabel('备用 OpenAI 模型',{exact:true}).inputValue(),'gpt-5.6-sol');
+      assert.equal(await page.getByLabel('OpenAI 模型',{exact:true}).inputValue(),'gpt-5.6-sol');
       await page.getByLabel('DeepSeek 模型',{exact:true}).selectOption('deepseek-pro');
-      await page.getByLabel('备用 OpenAI 模型',{exact:true}).selectOption('gpt-6.1-sol');
+      await page.getByLabel('OpenAI 模型',{exact:true}).selectOption('gpt-6.1-sol');
       await page.getByText(/接入核验时该名称未出现在服务方模型列表中/).waitFor();
-      await page.getByLabel('备用 OpenAI 模型',{exact:true}).selectOption('gpt-6-astra');
+      await page.getByLabel('OpenAI 模型',{exact:true}).selectOption('gpt-6-astra');
       await page.getByLabel('出题使用服务',{exact:true}).selectOption('openai');
       await page.getByLabel('全局出题并发上限',{exact:true}).fill('10');
       await page.getByRole('button',{name:'保存平台参数',exact:true}).click();
@@ -286,7 +286,7 @@ async function focusTrap(page) {
       await page.getByRole('status').filter({hasText:'平台参数已保存'}).waitFor();
       assert.deepEqual(f.runtimeTests,[]);
       f.probeFails=true;
-      await page.getByLabel('备用 OpenAI 模型',{exact:true}).selectOption('gpt-6.1-sol');
+      await page.getByLabel('OpenAI 模型',{exact:true}).selectOption('gpt-6.1-sol');
       await page.getByRole('button',{name:'保存平台参数',exact:true}).click();
       await page.getByRole('status').filter({hasText:'模型测试未通过'}).waitFor();
       await page.getByRole('status').filter({hasText:'HTTP 404：模型或接口不存在'}).waitFor();

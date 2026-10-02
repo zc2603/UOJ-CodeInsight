@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     grading_review_confidence_threshold: float = Field(default=0.85, ge=0, le=1)
 
     quality_audit_enabled: bool = False
+    # Code-level fallback keeps new quizzes on the legacy protocol. Production pins
+    # this to true in Compose (lightweight_v1 is the standard path since 2026-09-29).
+    # The flag also selects the protocol when a creation request omits one.
     lightweight_creation_enabled: bool = False
     quality_audit_timeout_seconds: float = Field(default=1200, gt=0)
     quality_audit_max_tokens: int = Field(default=100000, ge=1000)

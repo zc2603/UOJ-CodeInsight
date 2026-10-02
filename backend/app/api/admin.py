@@ -51,7 +51,7 @@ from app.services.grading_queue import enqueue_regrade
 from app.services.quiz_service import persist_quiz, preview_from_bundle, reset_attempt
 from app.time_utils import ensure_utc
 from app.services.generation_service import open_quiz, reopen_quiz, regenerate_prepared, retry_failed, summarize, stop_preparation
-from app.services.publication import publish as publish_scores, score_question, resolve_appeal, effective_attempt_score, effective_score
+from app.services.publication import publish as publish_scores, publish_blockers, score_question, resolve_appeal, effective_attempt_score, effective_score
 from app.services.llm_provider import LIGHTWEIGHT_GENERATOR_VERSIONS
 from app.services.teacher_settings import TeacherSettings, SettingsUpdate, load_settings, save_settings, grade_for, choice_defaults
 from app.schemas.api import QuizReopenRequest
@@ -712,6 +712,12 @@ class PublishScoresRequest(BaseModel):
 async def publish_quiz_scores(quiz_id: uuid.UUID, payload: PublishScoresRequest,
     principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     return await publish_scores(db, quiz_id, principal.username, include_answers=payload.include_answers)
+
+
+@router.get("/quizzes/{quiz_id}/publish-readiness")
+async def publish_quiz_readiness(quiz_id: uuid.UUID,
+    principal: AdminPrincipal = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    return await publish_blockers(db, quiz_id)
 
 
 class QuestionScoreRequest(BaseModel):

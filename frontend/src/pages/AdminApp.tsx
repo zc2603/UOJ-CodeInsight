@@ -137,6 +137,7 @@ export function AdminApp() {
   const [resultQuery, setResultQuery] = useState("");
   const [resultFilter, setResultFilter] = useState<"all" | "finished" | "active" | "attention" | "pending">("all");
   const [appeals, setAppeals] = useState<AppealItem[]>([]);
+  const [publishBlockers, setPublishBlockers] = useState<string[]>([]);
   const [resolvingAppeal, setResolvingAppeal] = useState<string | null>(null);
   const [appealResolution, setAppealResolution] = useState("");
   const [appealScore, setAppealScore] = useState<string>("");
@@ -254,6 +255,7 @@ export function AdminApp() {
     const timer = window.setInterval(() => {
       void api<ResultRow[]>(`/api/admin/quizzes/${selected.id}/results`).then(setResults).catch(() => undefined);
       void api<AppealItem[]>(`/api/admin/quizzes/${selected.id}/appeals`).then(setAppeals).catch(() => undefined);
+      void api<{ blockers: string[] }>(`/api/admin/quizzes/${selected.id}/publish-readiness`).then(value => setPublishBlockers(value.blockers ?? [])).catch(() => undefined);
     }, 10000);
     return () => window.clearInterval(timer);
   }, [view, selected]);
@@ -474,6 +476,9 @@ export function AdminApp() {
       setResults(await api(`/api/admin/quizzes/${quiz.id}/results`));
       setResultFilter(settings.result_filter);
       setAppeals(await api(`/api/admin/quizzes/${quiz.id}/appeals`));
+      await api<{ blockers: string[] }>(`/api/admin/quizzes/${quiz.id}/publish-readiness`)
+        .then(value => setPublishBlockers(value.blockers ?? []))
+        .catch(() => setPublishBlockers([]));
       setView("results");
     } catch (error) {
       setMessage((error as Error).message);
@@ -485,8 +490,9 @@ export function AdminApp() {
   function publishGrades() {
     if (!selected) return;
     const quiz = selected;
+    const blockers = publishBlockers.length > 0 ? `当前阻塞原因：${publishBlockers.join("；")}。` : "";
     setConfirm({ title: "公布本场成绩？",
-      description: `涉及 ${results.length} 名学生。学生将看到本人作答、逐问得分、评分理由，以及参考答案和正确选项。公布后不得重新开放、重置作答或自动重评。`,
+      description: `涉及 ${results.length} 名学生。学生将看到本人作答、逐问得分、评分理由，以及参考答案和正确选项。公布后不得重新开放、重置作答或自动重评。${blockers}`,
       confirmLabel: "确认公布", action: async () => {
         setBusy(true);
         try {
@@ -790,7 +796,7 @@ export function AdminApp() {
                   <td>{quiz.status.toUpperCase() === "DRAFT" ? `开放后 ${quiz.entry_minutes ?? 30} 分钟` : formatDate(quiz.end_time)}</td>
                   <td><div className="table-progress"><span><strong>{quiz.finished_count}</strong> / {quiz.participant_count}</span><i><b style={{ width: `${progress}%` }} /></i></div></td>
                   <td><strong>{quiz.average_score !== null ? `${quiz.average_score.toFixed(1)} 分` : "—"}</strong></td>
-                  <td className="actions-cell"><div className="actions"><button className="link primary-link" onClick={() => void showResults(quiz)}>查看结果</button><details className="action-menu" name="quiz-actions"><summary aria-label="更多操作"><MoreHorizontal size={18} /></summary><div onClick={event => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; }}><button onClick={() => void copyText(studentLink(quiz.id), "学生链接已复制")}><Copy size={15} />复制学生链接</button><button disabled={busy} onClick={() => regenerateCode(quiz)}><RefreshCw size={15} />生成备用码</button>{["CLOSED", "ACTIVE"].includes(quiz.status.toUpperCase()) && <button disabled={busy} onClick={() => reopenQuiz(quiz)}><RotateCcw size={15} />重新开放测评</button>}<button className="delete-quiz" disabled={busy} onClick={() => deleteQuiz(quiz)}><Trash2 size={15} />删除此测评</button></div></details></div></td>
+                  <td className="actions-cell"><div className="actions"><button className="link primary-link" onClick={() => void showResults(quiz)}>查看结果</button><details className="action-menu" name="quiz-actions"><summary aria-label="更多操作"><MoreHorizontal size={18} /></summary><div onClick={event => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; }}><button onClick={() => void copyText(studentLink(quiz.id), "学生链接已复制")}><Copy size={15} />复制学生链接</button><button disabled={busy} onClick={() => regenerateCode(quiz)}><RefreshCw size={15} />生成备用码</button>{!quiz.scores_published && ["CLOSED", "ACTIVE"].includes(quiz.status.toUpperCase()) && <button disabled={busy} onClick={() => reopenQuiz(quiz)}><RotateCcw size={15} />重新开放测评</button>}<button className="delete-quiz" disabled={busy} onClick={() => deleteQuiz(quiz)}><Trash2 size={15} />删除此测评</button></div></details></div></td>
                 </tr>;
               })}</tbody>
             </table> : <div className="empty-state"><div className="empty-symbol"><ClipboardList size={27} /></div><h2>还没有测评</h2><p>创建第一场测评后，这里会显示学生进入、作答和评分进度。</p><button disabled={!settingsLoaded} onClick={beginCreate}><Plus size={16} />创建第一场测评</button></div>}
@@ -851,8 +857,8 @@ export function AdminApp() {
           <header className="results-page-header">
             <div><button className="back" onClick={() => setView("list")}><ArrowLeft size={15} />返回测评管理</button><div className="results-title"><h1>{selected.name}</h1><span className={`status-pill ${selected.scores_published ? "status-finished" : "status-ready"}`}>{selected.scores_published ? "成绩已公布" : "成绩未公布"}</span></div><p><span className="live-dot" />结果与申诉每 10 秒自动刷新</p></div>
             <div className="results-publish-actions"><div className="header-actions"><a className="button secondary" href={`/api/admin/quizzes/${selected.id}/export`}><Download size={16} />导出 CSV</a>
-              <button type="button" onClick={publishGrades} disabled={busy || selected.scores_published}>
-                {selected.scores_published ? <Check size={16} /> : <BookOpenCheck size={16} />}{selected.scores_published ? "已公布成绩" : "公布成绩"}</button></div><p>{selected.scores_published ? "学生可查看成绩、参考答案与正确选项" : "公布成绩时，将同时公布参考答案与正确选项"}</p></div>
+              <button type="button" onClick={publishGrades} disabled={busy || selected.scores_published || publishBlockers.length > 0}>
+                {selected.scores_published ? <Check size={16} /> : <BookOpenCheck size={16} />}{selected.scores_published ? "已公布成绩" : "公布成绩"}</button></div><p>{selected.scores_published ? "学生可查看成绩、参考答案与正确选项" : publishBlockers.length > 0 ? `暂不能公布：${publishBlockers.join("；")}` : "公布成绩时，将同时公布参考答案与正确选项"}</p></div>
           </header>
           <section className="result-overview">
             <div><Users size={18} /><span>学生总数<strong>{results.length}</strong></span></div>

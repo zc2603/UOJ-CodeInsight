@@ -20,8 +20,8 @@ from app.services.grading_service import grade_attempt
 from app.services.import_service import ImportBundle, ImportedSubmission
 from app.services.lightweight_submission import save_draft, submit
 from app.services.llm_provider import MockLLMProvider
-from app.services.publication import (publish, score_question, student_result, request_appeal,
-    resolve_appeal)
+from app.services.publication import (publish, publish_blockers, score_question, student_result,
+    request_appeal, resolve_appeal)
 from app.services.quiz_service import persist_quiz, start_attempt
 from app.time_utils import ensure_utc
 
@@ -293,8 +293,15 @@ async def test_draft_submit_review_publish_and_appeal(db):
     attempt = await db.get(Attempt, attempt.id)
     assert attempt.status == AttemptStatus.FINISHED and attempt.review_required
     assert len((await db.scalars(select(ReviewIssue))).all()) == 1
+    open_readiness = await publish_blockers(db, quiz.id)
+    assert open_readiness["published"] is False
+    assert "进入窗口仍开放" in open_readiness["blockers"]
     quiz.end_time = datetime.now(timezone.utc) - timedelta(seconds=1)
     await db.commit()
+    blocked_readiness = await publish_blockers(db, quiz.id)
+    assert "进入窗口仍开放" not in blocked_readiness["blockers"]
+    assert any("待处理复核" in item for item in blocked_readiness["blockers"])
+    assert blocked_readiness["counts"]["review_pending"] == 1
     hidden = await student_result(db, quiz.id, "231250001")
     assert hidden == {"published": False, "message": "成绩尚未公布"}
     with pytest.raises(HTTPException) as blocked:
@@ -303,8 +310,10 @@ async def test_draft_submit_review_publish_and_appeal(db):
     question = await db.get(Question, uuid.UUID(first["id"]))
     await score_question(db, attempt.id, question.id, score=2, reason="确认理解",
         actor="teacher", expected_version=attempt.score_version)
+    assert (await publish_blockers(db, quiz.id))["blockers"] == []
     published = await publish(db, quiz.id, "teacher")
     assert published["published"] and published["include_answers"]
+    assert (await publish_blockers(db, quiz.id))["published"] is True
     result = await student_result(db, quiz.id, "231250001")
     assert result["score"] == 10 and result["max_score"] == 10
     assert all("correct_choice_id" in q and "reference_answer" in q for q in result["questions"])

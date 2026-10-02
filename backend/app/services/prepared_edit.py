@@ -2,7 +2,7 @@ import hashlib
 import json
 from sqlalchemy import select, func
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, ValidationError, field_validator
 from app.models import Attempt, AttemptStatus, GenerationJob, QuizParticipant, Quiz
 from app.schemas.llm import QuestionGenerationResult, LightweightGenerationResult, ChoiceOption
 from app.config import get_settings
@@ -71,7 +71,12 @@ async def edit_prepared(db, quiz_id, student_number, job_id, index, payload):
     updated = target.model_dump(mode="json") | changes
     result = generated.model_dump(mode="json")
     result["questions"] = [updated if q["index"] == index else q for q in result["questions"]]
-    job.result_json = schema.model_validate(result).model_dump(mode="json")
+    # An invalid edit (missing/duplicate options, answer key outside the options, ...) is
+    # a client error; without this it escaped as a 500.
+    try:
+        job.result_json = schema.model_validate(result).model_dump(mode="json")
+    except ValidationError as exc:
+        raise HTTPException(422, "题目内容不合法：请检查选项与正确选项") from exc
     # A running audit of the old text must not publish a conclusion for this revision.
     job.quality_state = "not_requested" if not lightweight and get_settings().quality_audit_enabled else "paused"
     job.quality_token = None

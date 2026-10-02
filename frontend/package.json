@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "npm run test:statement && npm run test:quality && npm run test:student",
     "test:student": "node node_modules/vite/bin/vite.js build --ssr tests/LightweightStudent.test.tsx --outDir node_modules/.cache/student-tests && node node_modules/.cache/student-tests/LightweightStudent.test.js",
+    "test:quality": "node node_modules/vite/bin/vite.js build --ssr tests/QualityAudit.test.tsx --outDir node_modules/.cache/quality-tests && node node_modules/.cache/quality-tests/QualityAudit.test.js",
     "test:interface": "node tests/interface.browser.cjs",
     "test:statement": "node node_modules/vite/bin/vite.js build --ssr tests/ProblemStatement.test.tsx --outDir node_modules/.cache/statement-tests && node node_modules/.cache/statement-tests/ProblemStatement.test.js"
   },

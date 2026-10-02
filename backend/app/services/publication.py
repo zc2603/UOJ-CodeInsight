@@ -77,6 +77,59 @@ async def publish(db, quiz_id: uuid.UUID, actor: str, *, include_answers: bool =
         "graded_count": len(attempts)}
 
 
+async def publish_blockers(db, quiz_id: uuid.UUID) -> dict:
+    """Read-only publication readiness for the teacher UI.
+
+    Mirrors the checks in ``publish`` but never raises and takes no locks, so the
+    dialog can show why publication is blocked. ``publish`` keeps its own atomic
+    re-validation; this result is advisory and may be stale by the time a teacher
+    confirms.
+    """
+    quiz = await db.scalar(select(Quiz).where(Quiz.id == quiz_id))
+    if quiz is None:
+        raise HTTPException(404, "测评不存在")
+    if quiz.published_at is not None:
+        return {"published": True, "blockers": [], "counts": {}}
+    now = datetime.now(timezone.utc)
+    blockers: list[str] = []
+    if quiz.status == QuizStatus.DRAFT or (quiz.status != QuizStatus.CLOSED and now < ensure_utc(quiz.end_time)):
+        blockers.append("进入窗口仍开放")
+    pending_job = await db.scalar(select(GenerationJob.id).where(GenerationJob.quiz_id == quiz_id,
+        GenerationJob.state.in_(["queued", "running"])).limit(1))
+    if pending_job is not None:
+        blockers.append("仍有题目正在准备")
+    participants = (await db.scalars(select(QuizParticipant).where(QuizParticipant.quiz_id == quiz_id))).all()
+    counts = {"participants": len(participants), "not_started": 0, "in_progress": 0,
+        "grading_error": 0, "review_pending": 0, "missing_scores": 0}
+    for participant in participants:
+        attempt = await current_attempt(db, participant.id)
+        if attempt is None:
+            counts["not_started"] += 1
+            continue
+        if attempt.status == AttemptStatus.GRADING_ERROR:
+            counts["grading_error"] += 1
+            continue
+        if attempt.status != AttemptStatus.FINISHED:
+            counts["in_progress"] += 1
+            continue
+        if not attempt.questions or any(q.answer is None or effective_score(q.answer) is None for q in attempt.questions):
+            counts["missing_scores"] += 1
+        issue = await db.scalar(select(ReviewIssue.id).join(Answer, Answer.id == ReviewIssue.answer_id)
+            .join(Question, Question.id == Answer.question_id)
+            .where(Question.attempt_id == attempt.id, ReviewIssue.resolved_at.is_(None)).limit(1))
+        if issue or attempt.review_required:
+            counts["review_pending"] += 1
+    if counts["in_progress"]:
+        blockers.append(f"{counts['in_progress']} 名学生尚未交卷或仍在评分")
+    if counts["grading_error"]:
+        blockers.append(f"{counts['grading_error']} 名学生评分失败，需要重新评分或人工处理")
+    if counts["missing_scores"]:
+        blockers.append(f"{counts['missing_scores']} 名学生存在缺失的逐题成绩")
+    if counts["review_pending"]:
+        blockers.append(f"{counts['review_pending']} 名学生仍有待处理复核事项")
+    return {"published": False, "blockers": blockers, "counts": counts}
+
+
 async def score_question(db, attempt_id: uuid.UUID, question_id: uuid.UUID, *, score: int,
     reason: str, actor: str, expected_version: int, clear_override: bool = False) -> dict:
     attempt = await db.scalar(select(Attempt).where(Attempt.id == attempt_id).with_for_update()
@@ -164,7 +217,6 @@ async def student_result(db, quiz_id: uuid.UUID, student_number: str) -> dict:
             max((ensure_utc(q.answer.submitted_at) for q in attempt.questions if q.answer), default=None)),
         "submission_source": attempt.submission_source or ("timeout" if attempt.timed_out else "manual"),
         "score": score, "grade": grade_for(score, quiz.grade_bands), "max_score": len(attempt.questions) * 2,
-        "percent": score / (len(attempt.questions) * 2) * 100 if attempt.questions else None,
         "appeal_deadline": appeal_deadline(quiz),
         "appeals_open": appeal_deadline(quiz) is None or datetime.now(timezone.utc) < appeal_deadline(quiz),
         "appeal_prompt": quiz.appeal_prompt or "请说明你认为需要重新检查的地方",

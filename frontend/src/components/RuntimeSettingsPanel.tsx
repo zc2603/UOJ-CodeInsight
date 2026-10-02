@@ -10,6 +10,8 @@ interface Options {
   generation_max_attempts: number; generation_global_concurrency: number; grading_timeout_seconds: number;
 }
 interface Snapshot {
+  model_tests?: { service: Service; model: string; status: "pending" | "passed" | "failed" | "skipped" | "incomplete";
+    message: string; elapsed_ms?: number }[];
   settings: Options; defaults: Options; revision: number;
   services: Record<Service, { base_url: string; configured: boolean; models: string[] }>;
   runtime: { active_workers: number; loaded_workers: number; poll_seconds: number; mode: string;
@@ -48,7 +50,10 @@ export function RuntimeSettingsPanel() {
     try {
       const fresh = await api<Snapshot>("/api/admin/runtime-settings", { method: "PUT",
         body: JSON.stringify({ expected_revision: data.revision, settings: draft }) });
-      setData(fresh); setDraft(fresh.settings); setStatus(fresh); setNotice("平台参数已保存，后台进程正在加载。");
+      setData(fresh); setDraft(fresh.settings); setStatus(fresh);
+      setNotice(fresh.model_tests?.some(test => test.status === "failed")
+        ? "平台参数已保存，但模型测试未通过，请查看下方结果。"
+        : fresh.model_tests?.length ? "平台参数已保存，模型测试已完成。" : "平台参数已保存，后台进程正在加载。");
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -68,25 +73,30 @@ export function RuntimeSettingsPanel() {
         <h3>{service === "deepseek" ? "DeepSeek API" : "备用 OpenAI API"}</h3>
         <p className="muted runtime-endpoint">{data.services[service].base_url}</p>
         <p>{data.services[service].configured ? "API Key 已配置" : "API Key 未配置"}</p>
-        <label>{service === "deepseek" ? "DeepSeek 模型" : "备用 OpenAI 模型"}<select aria-label={service === "deepseek" ? "DeepSeek 模型" : "备用 OpenAI 模型"} value={draft[`${service}_model`]} onChange={e => change(`${service}_model`, e.target.value)}>
+        <label>{service === "deepseek" ? "DeepSeek 模型" : "备用 OpenAI 模型"}<select disabled={busy} aria-label={service === "deepseek" ? "DeepSeek 模型" : "备用 OpenAI 模型"} value={draft[`${service}_model`]} onChange={e => change(`${service}_model`, e.target.value)}>
           {data.services[service].models.map(model => <option key={model} value={model}>{model}</option>)}</select></label>
         {service === "openai" && draft.openai_model === "gpt-6.1-sol" && <p className="muted">保留指定模型选项；接入核验时该名称未出现在服务方模型列表中。</p>}
       </div>)}</div>
       <div className="settings-grid">{(["generation_service", "grading_service"] as const).map(key => <label key={key}>{key === "generation_service" ? "出题使用服务" : "评分使用服务"}
-        <select aria-label={key === "generation_service" ? "出题使用服务" : "评分使用服务"} value={draft[key]} onChange={e => change(key, e.target.value as Service)}>
+        <select disabled={busy} aria-label={key === "generation_service" ? "出题使用服务" : "评分使用服务"} value={draft[key]} onChange={e => change(key, e.target.value as Service)}>
           <option value="deepseek">DeepSeek API</option><option value="openai">备用 OpenAI API</option></select></label>)}
-        <label>推理强度<select value={draft.reasoning_effort} onChange={e => change("reasoning_effort", e.target.value as Options["reasoning_effort"])}>
+        <label>推理强度<select disabled={busy} value={draft.reasoning_effort} onChange={e => change("reasoning_effort", e.target.value as Options["reasoning_effort"])}>
           <option value="max">max（充分推理）</option><option value="high">high</option><option value="low">low</option></select><small>OpenAI 的 max 对应 xhigh；DeepSeek 保持 thinking 开启。</small></label>
-        {numeric.map(([key, label, min, max]) => <label key={key}>{label}<input type="number" min={min} max={max} step={1} value={draft[key] as number}
+        {numeric.map(([key, label, min, max]) => <label key={key}>{label}<input disabled={busy} type="number" min={min} max={max} step={1} value={draft[key] as number}
           onChange={e => change(key, Number(e.target.value))} /></label>)}
       </div>
       <p className="muted">服务通过设置手动切换。请求超时指网络阶段等待；单轮总时限含排队及重试。HTTP 层最多 5 次请求，出题自动轮次另计。</p>
       <p className="muted">每进程请求并发 {data.runtime.request_concurrency_per_process}，出题执行器 {data.runtime.generation_workers_per_process}，评分执行器 {data.runtime.grading_workers_per_process}；执行器数量由部署配置决定。</p>
-      <div className="settings-actions"><button disabled={busy} onClick={() => void save()}>保存平台参数</button>
+      <p className="muted">切换服务或模型后自动进行简短问答测试，每个变化服务一次；最多等待 20 秒，输出上限 2048 token，不自动重试。</p>
+      <div className="settings-actions"><button disabled={busy} onClick={() => void save()}>{busy ? "正在保存并测试…" : "保存平台参数"}</button>
         <button className="secondary" disabled={busy} onClick={() => { setDraft(data.defaults); setNotice("已恢复初始值，保存后生效。"); }}>恢复运行初始值</button>
         <button className="secondary" disabled={busy} onClick={() => void reload()}>重新加载运行参数</button></div>
       <p className="muted" role="status">{status ? `服务器保存版本 ${status.revision} · ${status.runtime.loaded_workers} / ${status.runtime.active_workers} 个在线进程已加载${status.runtime.active_workers === 0 ? "（尚无运行确认）" : ""}` : "运行状态暂不可用"}</p>
-      {status && status.revision !== data.revision && <p className="notice">其他教师已更新平台参数，请重新加载后编辑。</p>}
+      {(status?.revision === data.revision ? status : data).model_tests?.map(test => <div className={test.status === "failed" || test.status === "incomplete" ? "error" : "notice"} key={`${test.service}:${test.model}`}>
+        <strong>版本 {data.revision} · {test.service === "deepseek" ? "DeepSeek" : "OpenAI"} · {test.model}</strong>
+        <p role="status">{test.message}{typeof test.elapsed_ms === "number" && `（${(test.elapsed_ms / 1000).toFixed(1)} 秒）`}</p>
+      </div>)}
+      {status && status.revision !== data.revision && <p className="notice">平台参数已更新，请重新加载后编辑。</p>}
     </>}
   </section>;
 }

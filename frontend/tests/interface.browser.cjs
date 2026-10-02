@@ -96,9 +96,14 @@ async function wire(page,f,errors) {
       if(req.method()==='PUT') {
         const body=req.postDataJSON();
         if(body.expected_revision!==(f.runtimeRevision||0)) return route.fulfill({status:409,json:{detail:'平台运行参数已被其他教师更新，请重新加载'}});
+        const previous=f.runtimeOptions||runtimeDefaults;
+        const changed=new Set(['deepseek','openai'].filter(service=>previous[`${service}_model`]!==body.settings[`${service}_model`]));
+        for(const key of ['generation_service','grading_service']) if(previous[key]!==body.settings[key]) changed.add(body.settings[key]);
+        f.runtimeTests=[...changed].map(service=>({service,model:body.settings[`${service}_model`],status:f.probeFails?'failed':'passed',
+          message:f.probeFails?'HTTP 404：模型或接口不存在':'测试通过：1 + 1 = 2',elapsed_ms:200}));
         f.runtimeOptions=body.settings; f.runtimeRevision=(f.runtimeRevision||0)+1;
       }
-      data={settings:f.runtimeOptions||runtimeDefaults,defaults:runtimeDefaults,revision:f.runtimeRevision||0,
+      data={settings:f.runtimeOptions||runtimeDefaults,defaults:runtimeDefaults,revision:f.runtimeRevision||0,model_tests:f.runtimeTests||[],
         services:{deepseek:{base_url:'https://deepseek.test',configured:true,models:['deepseek-flash','deepseek-pro']},
           openai:{base_url:'https://openai.test/v1',configured:true,models:['gpt-5.6-sol','gpt-6-astra','gpt-6.1-sol']}},
         runtime:{active_workers:4,loaded_workers:4,poll_seconds:3,mode:'openai-compatible',request_concurrency_per_process:25,generation_workers_per_process:20,grading_workers_per_process:4}};
@@ -273,7 +278,20 @@ async function focusTrap(page) {
       await page.getByRole('status').filter({hasText:'平台参数已保存'}).waitFor();
       assert.equal(f.runtimeOptions.generation_service,'openai');assert.equal(f.runtimeOptions.grading_service,'deepseek');
       assert.equal(f.runtimeOptions.generation_global_concurrency,10);
+      assert.equal(await page.getByRole('dialog').count(),0);
+      assert.equal(await page.getByRole('status').filter({hasText:'测试通过：1 + 1 = 2'}).count(),2);
       await capture(page,'teacher-runtime-settings',size);
+      await page.getByLabel('全局出题并发上限',{exact:true}).fill('9');
+      await page.getByRole('button',{name:'保存平台参数',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'平台参数已保存'}).waitFor();
+      assert.deepEqual(f.runtimeTests,[]);
+      f.probeFails=true;
+      await page.getByLabel('备用 OpenAI 模型',{exact:true}).selectOption('gpt-6.1-sol');
+      await page.getByRole('button',{name:'保存平台参数',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'模型测试未通过'}).waitFor();
+      await page.getByRole('status').filter({hasText:'HTTP 404：模型或接口不存在'}).waitFor();
+      assert.equal(f.runtimeOptions.openai_model,'gpt-6.1-sol');
+      await capture(page,'teacher-model-test-failed',size);
       f.runtimeRevision++;
       await page.getByRole('button',{name:'保存平台参数',exact:true}).click();
       await page.getByRole('alert').filter({hasText:'平台运行参数已被其他教师更新'}).waitFor();

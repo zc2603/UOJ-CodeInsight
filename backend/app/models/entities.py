@@ -126,6 +126,7 @@ class RuntimeConfigurationAudit(Base):
     revision: Mapped[int] = mapped_column(Integer, unique=True)
     actor: Mapped[str] = mapped_column(String(80))
     values_json: Mapped[dict] = mapped_column(JSON)
+    model_tests_json: Mapped[list | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

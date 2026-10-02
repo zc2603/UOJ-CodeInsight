@@ -1,14 +1,16 @@
 """Shared model/task configuration. Secrets stay in the deployment environment."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.config import Settings
 from app.models import RuntimeConfiguration, RuntimeConfigurationAudit, RuntimeWorker
 from app.services.teacher_settings import load_settings
+from app.services.model_probe import pending_tests, present_tests, probe
 
 Service = Literal["deepseek", "openai"]
 DEEPSEEK_MODELS = ("deepseek-flash", "deepseek-pro")
@@ -69,9 +71,10 @@ def task_settings(base: Settings, options: RuntimeOptions, kind: str) -> Setting
 
 async def runtime_response(db, base):
     options, revision = await read_runtime(db, base)
+    tests = await db.scalar(select(RuntimeConfigurationAudit.model_tests_json).where(RuntimeConfigurationAudit.revision == revision))
     workers = (await db.scalars(select(RuntimeWorker).where(
         RuntimeWorker.seen_at >= datetime.now(timezone.utc) - timedelta(seconds=15)))).all()
-    return {"settings": options, "revision": revision, "defaults": initial_options(base),
+    return {"settings": options, "revision": revision, "defaults": initial_options(base), "model_tests": present_tests(tests),
         "services": {
             "deepseek": {"base_url": base.llm_base_url, "configured": bool(base.llm_api_key), "models": DEEPSEEK_MODELS},
             "openai": {"base_url": base.openai_base_url, "configured": bool(base.openai_api_key), "models": OPENAI_MODELS}},
@@ -94,10 +97,25 @@ async def save_runtime(db, base, principal, payload):
         for service in {payload.settings.generation_service, payload.settings.grading_service}:
             if not (base.llm_api_key if service == "deepseek" else base.openai_api_key):
                 raise HTTPException(422, "所选模型服务尚未配置凭据")
+    previous = RuntimeOptions.model_validate({**initial_options(base).model_dump(), **(row.values_json or {})})
+    tests = pending_tests(previous, payload.settings)
     row.revision += 1
+    saved_revision = row.revision
     row.values_json = payload.settings.model_dump()
     row.updated_by = principal.username
     row.updated_at = datetime.now(timezone.utc)
-    db.add(RuntimeConfigurationAudit(revision=row.revision, actor=principal.username, values_json=row.values_json))
+    db.add(RuntimeConfigurationAudit(revision=row.revision, actor=principal.username, values_json=row.values_json,
+        model_tests_json=tests))
     await db.commit()
-    return await runtime_response(db, base)
+    response = await runtime_response(db, base)
+    # Preserve this save's snapshot even if another teacher saves during the probe.
+    response.update(settings=payload.settings, revision=saved_revision, model_tests=tests)
+    await db.commit()  # No transaction or configuration lock across the external request.
+    if tests:
+        results = await asyncio.gather(*(probe(task_settings(base,
+            payload.settings.model_copy(update={"generation_service": test["service"]}), "generation"), test) for test in tests))
+        await db.execute(update(RuntimeConfigurationAudit).where(RuntimeConfigurationAudit.revision == saved_revision)
+            .values(model_tests_json=results))
+        await db.commit()
+        response["model_tests"] = results
+    return response

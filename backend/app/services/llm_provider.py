@@ -240,6 +240,21 @@ class MockLLMProvider(LLMProvider):
         return GradingResult.model_validate_json(raw), raw
 
 
+def chat_payload(settings: Settings, system_prompt: str, user_prompt: str, *, max_tokens: int | None = None):
+    payload = {
+        "model": settings.llm_model,
+        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        "response_format": {"type": "json_object"},
+    }
+    tokens = settings.llm_max_tokens if max_tokens is None else max_tokens
+    if settings.llm_api_style == "openai":
+        payload.update(max_completion_tokens=tokens,
+            reasoning_effort="xhigh" if settings.llm_reasoning_effort == "max" else settings.llm_reasoning_effort)
+    else:
+        payload.update(thinking={"type": "enabled"}, reasoning_effort=settings.llm_reasoning_effort, max_tokens=tokens)
+    return payload
+
+
 class OpenAICompatibleLLMProvider(LLMProvider):
     def __init__(self, settings: Settings):
         if not settings.llm_api_key:
@@ -264,18 +279,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         while network_failures < 3 and schema_failures < 3:
             try:
                 async with self.semaphore:
-                    payload = {
-                        "model": self.model_name,
-                        "messages": [{"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}],
-                        "response_format": {"type": "json_object"},
-                    }
-                    if self.settings.llm_api_style == "openai":
-                        payload.update(max_completion_tokens=self.settings.llm_max_tokens,
-                            reasoning_effort="xhigh" if self.settings.llm_reasoning_effort == "max" else self.settings.llm_reasoning_effort)
-                    else:
-                        payload.update(thinking={"type": "enabled"},
-                            reasoning_effort=self.settings.llm_reasoning_effort, max_tokens=self.settings.llm_max_tokens)
+                    payload = chat_payload(self.settings, system_prompt, user_prompt)
                     response = await self.client.post(
                         "chat/completions",
                         json=payload,

@@ -111,7 +111,8 @@ async def check_preparation_schema():
         await db.execute(text("SELECT appeal_window_days, appeal_prompt FROM quizzes LIMIT 0"))
         await db.execute(text("SELECT revision, values_json FROM runtime_configuration WHERE id = 1"))
         await db.execute(text("SELECT revision, seen_at FROM runtime_workers LIMIT 0"))
-        assert revision == "0009_runtime_and_appeals" and control == 1
+        await db.execute(text("SELECT model_tests_json FROM runtime_configuration_audits LIMIT 0"))
+        assert revision == "0010_model_switch_tests" and control == 1
         from app.services.runtime_settings import runtime_response
         runtime = await runtime_response(db, get_settings())
         print("runtime_settings=" + json.dumps({"revision": runtime["revision"],

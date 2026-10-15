@@ -755,6 +755,7 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .result-feedback > p { margin: 0; font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 .result-question-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-top: 18px; border-top: 1px solid var(--line); }
 .result-question-actions > span { color: var(--muted); font-size: 12px; }
+.result-question-actions > span > small { display: block; margin-top: 6px; font-size: 11px; }
 .result-question-actions button { flex: none; min-height: 34px; font-size: 12px; }
 .student-appeal-record { display: grid; gap: 12px; margin-bottom: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: #fafcfb; }
 .student-appeal-record > .status-pill { justify-self: start; }

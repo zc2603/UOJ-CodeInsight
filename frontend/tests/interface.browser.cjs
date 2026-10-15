@@ -97,6 +97,10 @@ async function wire(page,f,errors) {
       quiz.scheduled_open_error=null;data={scheduled_open_at:quiz.scheduled_open_at};
     } else if(p==='/api/admin/overview') data={student_count:3};
     else if(p.endsWith('/publish-readiness')) data={blockers:[]};
+    else if(p.endsWith('/publish-scores')) {
+      assert.equal(req.method(),'POST');
+      f.quizzes.find(q=>q.id===quizId).scores_published=true;data={published:true};
+    }
     else if(p==='/api/admin/features') data={lightweight_creation_enabled:true,quality_audit_enabled:false};
     else if(p==='/api/admin/runtime-settings') {
       if(req.method()==='PUT') {
@@ -201,7 +205,7 @@ async function focusTrap(page) {
       assert.equal(f.submissions[0].idempotency_key,f.submissions[1].idempotency_key);
       assert.equal(f.submissions[1].drafts[1].choice_id,'B');
       assert.ok(!f.calls.some(c=>c.includes('/current/draft')),'Lightweight attempted a legacy draft save');
-      await page.getByRole('button',{name:'查看成绩状态'}).click();await page.getByRole('heading',{name:'成绩尚未公布'}).waitFor();
+      await page.getByRole('button',{name:'查看测评结果'}).click();await page.getByRole('heading',{name:'测评结果待发布'}).waitFor();
       await capture(page,'student-results-waiting',size);
       f.resultMode='published';await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('heading',{name:'逐题回顾'}).waitFor();
       assert.equal(await page.locator('.result-total strong').textContent(),'B+');
@@ -220,16 +224,19 @@ async function focusTrap(page) {
         f.score=5;delete f.maxScore;await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('button',{name:'刷新状态'}).waitFor();
       }
       await capture(page,'student-results-published',size);
-      await page.getByRole('button',{name:'申请复核',exact:true}).first().click();
+      await page.getByText('对题目、作答反馈或等级有疑问，都可以告诉老师。',{exact:true}).first().waitFor();
+      await page.getByRole('button',{name:'提出疑问',exact:true}).first().click();
+      assert.equal(await page.getByLabel('请说明你认为需要重新检查的地方').getAttribute('placeholder'),'可以结合你的回答，说明希望教师核对的内容。');
       await page.getByLabel('请说明你认为需要重新检查的地方').fill('希望教师核对我的口语表述。');
-      await capture(page,'student-appeal',size);await page.getByRole('button',{name:'提交申请'}).click();
-      await page.getByText('复核申请 · 处理中',{exact:true}).waitFor();assert.ok(await page.getByRole('button',{name:'申请复核',exact:true}).first().isDisabled());
+      await capture(page,'student-appeal',size);await page.getByRole('button',{name:'提交疑问'}).click();
+      await page.getByText('疑问反馈 · 待回复',{exact:true}).waitFor();assert.ok(await page.getByRole('button',{name:'提出疑问',exact:true}).first().isDisabled());
       f.appealDeadline=new Date(Date.now()-1000).toISOString();f.appealClosed=true;
-      await page.getByRole('button',{name:'刷新状态'}).click();await page.getByText('申诉期已结束',{exact:true}).first().waitFor();
-      assert.ok(await page.getByRole('button',{name:'申请复核',exact:true}).nth(1).isDisabled());
+      await page.getByRole('button',{name:'刷新状态'}).click();await page.getByText('疑问提交已截止',{exact:true}).first().waitFor();
+      assert.ok(await page.getByRole('button',{name:'提出疑问',exact:true}).nth(1).isDisabled());
       f.appealDeadline=new Date(Date.now()+86400000).toISOString();f.appealClosed=false;f.appealPrompt='请结合代码说明复核理由';
-      await page.getByRole('button',{name:'刷新状态'}).click();await page.getByText(/申请复核截止：/).first().waitFor();
-      await page.getByRole('button',{name:'申请复核',exact:true}).nth(1).click();
+      await page.getByRole('button',{name:'刷新状态'}).click();await page.getByText(/疑问提交截止：/).first().waitFor();
+      assert.ok((await page.locator('.result-question-actions > span').first().textContent()).includes('对题目、作答反馈或等级有疑问，都可以告诉老师。'));
+      await page.getByRole('button',{name:'提出疑问',exact:true}).nth(1).click();
       await page.getByLabel('请结合代码说明复核理由').waitFor();
       await capture(page,'student-appeal-window',size);
       f.resultMode='absent';await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('heading',{name:'本次测评未参加'}).waitFor();await capture(page,'student-absent',size);
@@ -290,9 +297,9 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'重新加载',exact:true}).click();
       await page.waitForFunction(()=>!document.querySelector('[role="alert"]'));
       assert.equal(await page.getByLabel('首次开放进入窗口（分钟）').inputValue(),'45');
-      await page.getByLabel('默认申诉期限',{exact:true}).selectOption('days');
-      await page.getByLabel('公布后天数',{exact:true}).fill('3');
-      await page.getByLabel('申诉填写提示语',{exact:true}).fill('请结合代码说明复核理由');
+      await page.getByLabel('默认疑问提交期限',{exact:true}).selectOption('days');
+      await page.getByLabel('发布后天数',{exact:true}).fill('3');
+      await page.getByLabel('疑问填写提示语',{exact:true}).fill('请结合代码说明复核理由');
       await page.getByRole('button',{name:'保存本组',exact:true}).nth(3).click();
       await page.getByRole('status').filter({hasText:'本组设置已保存'}).waitFor();
       assert.equal(f.settings.appeal_window_days,3);
@@ -337,7 +344,7 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'固定总时长'}).click();await page.locator('.assessment-minute-field input').fill('30');
       await capture(page,'teacher-settings',size);
       await page.getByRole('button',{name:'测评管理',exact:true}).click();await page.locator('.quiz-table').getByRole('button',{name:'查看结果'}).first().click();
-      await page.getByRole('heading',{name:'学生成绩',exact:true}).waitFor();
+      await page.getByRole('heading',{name:'学生测评结果',exact:true}).waitFor();
       assert.equal(await page.getByRole('columnheader',{name:'等级',exact:true}).count(),1);
       assert.equal(await page.getByRole('columnheader',{name:'完成时间',exact:true}).count(),1);
       assert.equal(await page.getByRole('columnheader',{name:'最低置信度',exact:true}).count(),0);
@@ -345,12 +352,18 @@ async function focusTrap(page) {
       assert.deepEqual(await page.locator('.result-table .grade-score').allTextContents(),['B+','D','—','—','—']);
       assert.equal(await page.locator('.result-overview > div').nth(2).locator('strong').textContent(),'3.0 分');
       await capture(page,'teacher-results',size);
-      const appealFilters=page.getByRole('group',{name:'申诉状态筛选'});
+      await page.getByRole('button',{name:'发布测评结果',exact:true}).click();
+      await page.getByRole('heading',{name:'发布本场测评结果？',exact:true}).waitFor();
+      await focusTrap(page);await capture(page,'teacher-publish-dialog',size);
+      await page.getByRole('button',{name:'确认发布',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'结果已发布'}).waitFor();
+      assert.ok(await page.getByRole('button',{name:'已发布结果',exact:true}).isDisabled());
+      const appealFilters=page.getByRole('group',{name:'疑问状态筛选'});
       assert.equal(await page.locator('.appeal-item').count(),1);
       assert.equal(await page.getByText('历史申请：请核对累加含义。',{exact:true}).count(),0);
-      await appealFilters.getByRole('button',{name:'已处理（1）',exact:true}).click();
+      await appealFilters.getByRole('button',{name:'已回复（1）',exact:true}).click();
       await page.getByText('已核对原回答，认可其表达的核心理解。',{exact:true}).waitFor();
-      assert.equal(await page.getByRole('button',{name:'处理申诉',exact:true}).count(),0);
+      assert.equal(await page.getByRole('button',{name:'回复疑问',exact:true}).count(),0);
       await page.locator('.appeal-context summary').click();
       await page.getByText('历史答案：保存已经读入的总和。',{exact:true}).waitFor();
       await page.getByText('历史评分反馈：解释不完整。',{exact:true}).waitFor();
@@ -360,10 +373,10 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'返回测评结果',exact:true}).click();
       await appealFilters.getByRole('button',{name:'全部（2）',exact:true}).click();
       assert.equal(await page.locator('.appeal-item').count(),2);
-      assert.equal(await page.getByRole('button',{name:'处理申诉',exact:true}).count(),1);
-      await appealFilters.getByRole('button',{name:'待处理（1）',exact:true}).click();
+      assert.equal(await page.getByRole('button',{name:'回复疑问',exact:true}).count(),1);
+      await appealFilters.getByRole('button',{name:'待回复（1）',exact:true}).click();
       await page.getByLabel('搜索学号').fill('209900001');assert.equal(await page.locator('.result-table tbody tr').count(),1);await page.getByLabel('搜索学号').fill('');
-      await page.getByRole('button',{name:'处理申诉'}).click();await focusTrap(page);await capture(page,'teacher-appeal-dialog',size);await page.keyboard.press('Escape');
+      await page.getByRole('button',{name:'回复疑问'}).click();await focusTrap(page);await capture(page,'teacher-appeal-dialog',size);await page.keyboard.press('Escape');
       await page.getByRole('button',{name:'完整作答'}).click();await page.getByRole('heading',{name:'逐题成绩',exact:true}).waitFor();
       await page.locator('.material-details summary').first().click();await capture(page,'teacher-attempt',size);
       assert.equal(await page.locator('.material-details').first().locator('.wrapped-code-line').count(),100);

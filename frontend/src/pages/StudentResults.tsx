@@ -72,19 +72,19 @@ export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout:
     {error && <div className="error" role="alert">{error}</div>}
     {!result ? <div className="card result-state" role="status"><span className="result-state-icon">
       {refreshing ? <LoaderCircle size={30} className="spin" /> : <RefreshCw size={30} />}</span>
-      <h2>{error ? "暂时无法读取结果" : "正在读取测评结果"}</h2><p>{error ? "请检查网络连接，然后点击刷新状态重试。" : "正在核对本次测评的成绩状态，请稍候。"}</p></div> : !result.published ?
+      <h2>{error ? "暂时无法读取结果" : "正在读取测评结果"}</h2><p>{error ? "请检查网络连接，然后点击刷新状态重试。" : "正在核对本次测评的结果状态，请稍候。"}</p></div> : !result.published ?
       <div className="card result-state">
         <span className="status-pill status-finished"><CheckCircle2 size={14} />作答已提交</span>
         <span className="result-state-icon"><Clock3 size={32} /></span>
-        <h2>成绩尚未公布</h2><p>你的作答已保存，请等待教师公布成绩。<br />公布后，使用同一测评链接即可查看得分与反馈。</p>
-        <div className="result-state-steps"><span><CheckCircle2 size={16} />完成作答</span><i /><strong><Clock3 size={16} />等待公布</strong><i /><span><FileCheck2 size={16} />查看反馈</span></div>
+        <h2>测评结果待发布</h2><p>本次作答已提交。<br />教师发布后，使用同一测评链接即可查看本次等级与答题反馈。</p>
+        <div className="result-state-steps"><span><CheckCircle2 size={16} />完成作答</span><i /><strong><Clock3 size={16} />等待发布</strong><i /><span><FileCheck2 size={16} />查看反馈</span></div>
         <div className="result-state-note">现在可以关闭页面，无需停留等待。</div>
       </div> :
       result.participated === false ? <div className="card result-state"><span className="result-state-icon"><FileCheck2 size={32} /></span>
-        <h2>本次测评未参加</h2><p>没有可查看的作答与成绩记录。</p></div> :
+        <h2>本次测评未参加</h2><p>没有可查看的作答与测评结果。</p></div> :
       <>
-        <section className="card student-score-summary" aria-label="成绩概览">
-          <div className="student-score-main"><span className="status-pill status-finished"><CheckCircle2 size={14} />成绩已公布</span>
+        <section className="card student-score-summary" aria-label="测评结果概览">
+          <div className="student-score-main"><span className="status-pill status-finished"><CheckCircle2 size={14} />结果已发布</span>
             <p className="result-total"><strong>{result.grade ?? "—"}</strong></p><span className="muted">本次测评等级</span></div>
           <div className="student-score-meta"><div><span>本次测评总分</span><strong>{result.score}<small> / {result.max_score} 分</small></strong></div>
             <div><span>完成时间</span><strong className="completion-time">{result.submitted_at ? new Date(result.submitted_at).toLocaleString("zh-CN", { hour12: false }) : "—"}</strong>
@@ -103,22 +103,23 @@ export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout:
             <div className="result-feedback-grid"><section className="student-answer-box"><h4>你的答案</h4><p className="preserve-text">{q.choice_id || q.answer_text || "未作答"}</p></section>
               {(q.reference_answer || q.correct_choice_id) && <section className="reference-answer-box"><h4>参考答案</h4>
                 {q.correct_choice_id && <p className="correct-choice">正确选项：{q.correct_choice_id}</p>}{q.reference_answer && <ProblemStatement text={q.reference_answer} />}</section>}</div>
-            <section className="result-feedback"><h4><MessageSquareText size={16} />评分反馈</h4><p>{q.reason || "暂无评分说明"}</p></section>
-            {q.appeals.map(a => <div key={a.id} className="student-appeal-record"><span className={`status-pill ${a.state === "pending" ? "appeal-pending" : "status-finished"}`}>复核申请 · {a.state === "pending" ? "处理中" : "已处理"}</span>
+            <section className="result-feedback"><h4><MessageSquareText size={16} />作答反馈</h4><p>{q.reason || "暂无作答反馈"}</p></section>
+            {q.appeals.map(a => <div key={a.id} className="student-appeal-record"><span className={`status-pill ${a.state === "pending" ? "appeal-pending" : "status-finished"}`}>疑问反馈 · {a.state === "pending" ? "待回复" : "已回复"}</span>
               <p className="preserve-text">{a.reason}</p>{a.resolution && <div><strong>教师回复</strong><p className="preserve-text">{a.resolution}</p></div>}</div>)}
-            <div className="result-question-actions"><span>{!appealsOpen ? "申诉期已结束" : result.appeal_deadline ? `申请复核截止：${new Date(result.appeal_deadline).toLocaleString("zh-CN", { hour12: false })}` : "对本题评分有疑问？可向教师申请复核。"}</span>
+            <div className="result-question-actions"><span>对题目、作答反馈或等级有疑问，都可以告诉老师。
+              {!appealsOpen ? <small>疑问提交已截止</small> : result.appeal_deadline && <small>疑问提交截止：{new Date(result.appeal_deadline).toLocaleString("zh-CN", { hour12: false })}</small>}</span>
               <button type="button" className="secondary" disabled={busy || !appealsOpen || q.appeals.some(a => a.state === "pending" || a.question_score_version === q.score_version)}
-                aria-expanded={appealFor === q.id} onClick={() => { setAppealFor(q.id); setReason(""); }}>申请复核</button></div>
+                aria-expanded={appealFor === q.id} onClick={() => { setAppealFor(q.id); setReason(""); }}>提出疑问</button></div>
             {appealFor === q.id && appealsOpen && <form className="appeal-form" onSubmit={event => { event.preventDefault(); if (!busy && reason.trim()) void submitAppeal(q.id); }}>
               <label>{result.appeal_prompt || "请说明你认为需要重新检查的地方"}
                 <textarea autoFocus required disabled={busy} value={reason} maxLength={1000} placeholder="可以结合你的回答，说明希望教师核对的内容。" onChange={event => setReason(event.target.value)} />
               </label>
               <div className="appeal-form-actions"><small>{reason.length} / 1000</small><button type="button" className="secondary" disabled={busy} onClick={() => setAppealFor(null)}>取消</button>
-                <button type="submit" disabled={busy || !reason.trim()}>{busy ? "正在提交…" : "提交申请"}</button></div>
+                <button type="submit" disabled={busy || !reason.trim()}>{busy ? "正在提交…" : "提交疑问"}</button></div>
             </form>}</div>
           </article>)}
         </div>
       </>}
-      <footer className="result-page-footer"><span>仅展示你本人的作答与成绩</span><span role="status">{updatedAt && `最近更新 ${updatedAt}`}</span></footer>
+      <footer className="result-page-footer"><span>仅展示你本人的作答与测评结果</span><span role="status">{updatedAt && `最近更新 ${updatedAt}`}</span></footer>
     </section></main>;
 }

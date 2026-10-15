@@ -88,12 +88,12 @@ export function TeacherSettingsPanel({ value, defaults, revision, onSaved, onRel
         <div className="settings-code-preview"><CodeBlock code={'// 代码显示预览\nfor (int index = 0; index < numbers.size(); ++index) {\n    result += numbers[index]; // 自动换行仍保留源码行号\n}'} fontSize={draft.code_font_size} wrap={draft.code_wrap} /></div>
         {actions("display")}
       </section>
-      <section className="card settings-section"><h2>申诉默认规则</h2><p className="muted">用于新测评，从首次公布成绩时开始计算；已提交的申请可继续由教师处理。</p>
-        <div className="settings-grid"><label>默认申诉期限<select aria-label="默认申诉期限" value={draft.appeal_window_days == null ? "unlimited" : "days"}
+      <section className="card settings-section"><h2>疑问反馈默认规则</h2><p className="muted">用于新测评，从首次发布测评结果时开始计算；已提交的疑问可继续由教师处理。</p>
+        <div className="settings-grid"><label>默认疑问提交期限<select aria-label="默认疑问提交期限" value={draft.appeal_window_days == null ? "unlimited" : "days"}
           onChange={e => change("appeal_window_days", e.target.value === "unlimited" ? null : 7)}>
-          <option value="unlimited">不限期</option><option value="days">公布后指定天数</option></select></label>
-          {draft.appeal_window_days != null && <label>公布后天数<input type="number" min={1} max={365} step={1} value={draft.appeal_window_days || ""} onChange={e => change("appeal_window_days", Number(e.target.value))} /></label>}</div>
-        <label>申诉填写提示语<textarea aria-label="申诉填写提示语" maxLength={500} value={draft.appeal_prompt ?? "请说明你认为需要重新检查的地方"} onChange={e => change("appeal_prompt", e.target.value)} /></label>
+          <option value="unlimited">不限期</option><option value="days">发布后指定天数</option></select></label>
+          {draft.appeal_window_days != null && <label>发布后天数<input type="number" min={1} max={365} step={1} value={draft.appeal_window_days || ""} onChange={e => change("appeal_window_days", Number(e.target.value))} /></label>}</div>
+        <label>疑问填写提示语<textarea aria-label="疑问填写提示语" maxLength={500} value={draft.appeal_prompt ?? "请说明你认为需要重新检查的地方"} onChange={e => change("appeal_prompt", e.target.value)} /></label>
         {actions("appeals")}
       </section>
       <RuntimeSettingsPanel />

@@ -252,7 +252,7 @@ export function StudentApp({ quizId }: Props) {
       <div className="app-kicker">UOJ 代码理解测评</div>
       <h1>{timedOut ? "时间已到，已自动交卷" : "全部答案已提交"}</h1>
       <p>{timedOut ? "已保存的答案将正常评分，未作答部分计零分。可以关闭当前页面。" : "本次作答已经保存，可以关闭当前页面。"}</p>
-      <div className="done-actions"><button type="button" onClick={() => setScreen("results")}>查看成绩状态<ArrowRight size={16} /></button>
+      <div className="done-actions"><button type="button" onClick={() => setScreen("results")}>查看测评结果<ArrowRight size={16} /></button>
       <button type="button" className="secondary" onClick={() => void logout()}><LogOut size={16} />退出登录</button></div>
     </section></main>
   );

@@ -224,7 +224,7 @@ async function focusTrap(page) {
         f.score=5;delete f.maxScore;await page.getByRole('button',{name:'刷新状态'}).click();await page.getByRole('button',{name:'刷新状态'}).waitFor();
       }
       await capture(page,'student-results-published',size);
-      await page.getByText('对题目、作答反馈或等级有疑问，都可以告诉老师。',{exact:true}).first().waitFor();
+      await page.getByText('对题目、作答反馈或本题评分有疑问，都可以请教师解答与复核。',{exact:true}).first().waitFor();
       await page.getByRole('button',{name:'提出疑问',exact:true}).first().click();
       assert.equal(await page.getByLabel('请说明你认为需要重新检查的地方').getAttribute('placeholder'),'可以结合你的回答，说明希望教师核对的内容。');
       await page.getByLabel('请说明你认为需要重新检查的地方').fill('希望教师核对我的口语表述。');
@@ -235,7 +235,7 @@ async function focusTrap(page) {
       assert.ok(await page.getByRole('button',{name:'提出疑问',exact:true}).nth(1).isDisabled());
       f.appealDeadline=new Date(Date.now()+86400000).toISOString();f.appealClosed=false;f.appealPrompt='请结合代码说明复核理由';
       await page.getByRole('button',{name:'刷新状态'}).click();await page.getByText(/疑问提交截止：/).first().waitFor();
-      assert.ok((await page.locator('.result-question-actions > span').first().textContent()).includes('对题目、作答反馈或等级有疑问，都可以告诉老师。'));
+      assert.ok((await page.locator('.result-question-actions > span').first().textContent()).includes('对题目、作答反馈或本题评分有疑问，都可以请教师解答与复核。'));
       await page.getByRole('button',{name:'提出疑问',exact:true}).nth(1).click();
       await page.getByLabel('请结合代码说明复核理由').waitFor();
       await capture(page,'student-appeal-window',size);

@@ -106,7 +106,7 @@ export function StudentResults({ quizId, onLogout }: { quizId: string; onLogout:
             <section className="result-feedback"><h4><MessageSquareText size={16} />作答反馈</h4><p>{q.reason || "暂无作答反馈"}</p></section>
             {q.appeals.map(a => <div key={a.id} className="student-appeal-record"><span className={`status-pill ${a.state === "pending" ? "appeal-pending" : "status-finished"}`}>疑问反馈 · {a.state === "pending" ? "待回复" : "已回复"}</span>
               <p className="preserve-text">{a.reason}</p>{a.resolution && <div><strong>教师回复</strong><p className="preserve-text">{a.resolution}</p></div>}</div>)}
-            <div className="result-question-actions"><span>对题目、作答反馈或等级有疑问，都可以告诉老师。
+            <div className="result-question-actions"><span>对题目、作答反馈或本题评分有疑问，都可以请教师解答与复核。
               {!appealsOpen ? <small>疑问提交已截止</small> : result.appeal_deadline && <small>疑问提交截止：{new Date(result.appeal_deadline).toLocaleString("zh-CN", { hour12: false })}</small>}</span>
               <button type="button" className="secondary" disabled={busy || !appealsOpen || q.appeals.some(a => a.state === "pending" || a.question_score_version === q.score_version)}
                 aria-expanded={appealFor === q.id} onClick={() => { setAppealFor(q.id); setReason(""); }}>提出疑问</button></div>

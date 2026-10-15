@@ -63,6 +63,8 @@ export interface PreparationProgress {
 }
 
 export interface QuizSummary {
+  scheduled_open_at?: string | null;
+  scheduled_open_error?: string | null;
   entry_minutes?: number;
   reopen_minutes?: number;
   assessment_version?: string;

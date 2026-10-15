@@ -116,6 +116,8 @@ async def open_quiz(db, quiz_id, *, confirm_partial=False):
         await stop_pending(db, quiz_id)
     now = datetime.now(timezone.utc)
     quiz.status = QuizStatus.PUBLISHED
+    quiz.scheduled_open_at = None
+    quiz.scheduled_open_error = None
     quiz.start_time = now
     quiz.end_time = now + timedelta(minutes=quiz.entry_minutes or 30)
     await db.commit()

@@ -51,6 +51,8 @@ from app.services.grading_queue import enqueue_regrade
 from app.services.quiz_service import persist_quiz, preview_from_bundle, reset_attempt
 from app.time_utils import ensure_utc
 from app.services.generation_service import open_quiz, reopen_quiz, regenerate_prepared, retry_failed, summarize, stop_preparation
+from app.services.scheduled_open import set_schedule
+from app.schemas.api import QuizScheduleRequest
 from app.services.publication import publish as publish_scores, publish_blockers, score_question, resolve_appeal, effective_attempt_score, effective_score
 from app.services.llm_provider import LIGHTWEIGHT_GENERATOR_VERSIONS
 from app.services.teacher_settings import TeacherSettings, SettingsUpdate, load_settings, save_settings, grade_for, choice_defaults
@@ -252,6 +254,8 @@ async def list_quizzes(db: AsyncSession = Depends(get_db)) -> list[QuizSummary]:
             QuizSummary(
                 id=quiz.id,
                 entry_minutes=quiz.entry_minutes,
+                scheduled_open_at=quiz.scheduled_open_at,
+                scheduled_open_error=quiz.scheduled_open_error,
                 reopen_minutes=quiz.reopen_minutes,
                 assessment_version=quiz.assessment_version,
                 scores_published=quiz.published_at is not None,
@@ -311,6 +315,12 @@ async def delete_quiz(quiz_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 async def publish_quiz(quiz_id: uuid.UUID, payload: QuizOpenRequest = Body(default=QuizOpenRequest()), db: AsyncSession = Depends(get_db)):
     quiz = await open_quiz(db, quiz_id, confirm_partial=payload.confirm_partial)
     return {"status": quiz.status, "start_time": quiz.start_time, "end_time": quiz.end_time}
+
+
+@router.put("/quizzes/{quiz_id}/schedule", dependencies=[Depends(require_admin)])
+async def schedule_quiz(quiz_id: uuid.UUID, payload: QuizScheduleRequest, db: AsyncSession = Depends(get_db)):
+    quiz = await set_schedule(db, quiz_id, payload.scheduled_open_at)
+    return {"scheduled_open_at": quiz.scheduled_open_at}
 
 
 @router.post("/quizzes/{quiz_id}/reopen", dependencies=[Depends(require_admin)])

@@ -91,6 +91,10 @@ class QuizOpenRequest(BaseModel):
     confirm_partial: bool = False
 
 
+class QuizScheduleRequest(BaseModel):
+    scheduled_open_at: datetime | None = None
+
+
 class QuizReopenRequest(BaseModel):
     minutes: int | None = Field(default=None, ge=1, le=1440, strict=True)
 
@@ -109,6 +113,8 @@ class PreparationProgress(BaseModel):
 
 
 class QuizSummary(BaseModel):
+    scheduled_open_at: datetime | None = None
+    scheduled_open_error: str | None = None
     entry_minutes: int = 30
     reopen_minutes: int = 30
     model_config = ConfigDict(from_attributes=True)

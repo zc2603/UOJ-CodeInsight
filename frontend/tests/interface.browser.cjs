@@ -90,7 +90,13 @@ async function wire(page,f,errors) {
     else if(p==='/api/admin/quizzes') {
       if(!f.loggedIn)return route.fulfill({status:401,json:{detail:'登录后继续'}});
       data=f.quizzes;
+    } else if(p==='/api/admin/quizzes/draft/schedule') {
+      assert.equal(req.method(),'PUT');
+      const quiz=f.quizzes.find(q=>q.id==='draft');
+      quiz.scheduled_open_at=req.postDataJSON().scheduled_open_at;
+      quiz.scheduled_open_error=null;data={scheduled_open_at:quiz.scheduled_open_at};
     } else if(p==='/api/admin/overview') data={student_count:3};
+    else if(p.endsWith('/publish-readiness')) data={blockers:[]};
     else if(p==='/api/admin/features') data={lightweight_creation_enabled:true,quality_audit_enabled:false};
     else if(p==='/api/admin/runtime-settings') {
       if(req.method()==='PUT') {
@@ -230,6 +236,26 @@ async function focusTrap(page) {
       await page.getByRole('button',{name:'登录管理端'}).click();await page.getByRole('heading',{name:'全部测评'}).waitFor();
       assert.equal(await page.locator('.quiz-table tbody tr').first().locator('td').nth(4).textContent(),'3.0 分');
       await capture(page,'teacher-list',size);
+      await page.getByRole('button',{name:'定时开放',exact:true}).click();
+      await page.getByLabel('开放时间（北京时间）').fill('2099-10-16T08:00');
+      await focusTrap(page);await capture(page,'teacher-schedule-dialog',size);
+      await page.getByRole('button',{name:'确认定时开放',exact:true}).click();
+      await page.getByRole('button',{name:'修改时间',exact:true}).waitFor();
+      assert.equal(f.quizzes.find(q=>q.id==='draft').scheduled_open_at,'2099-10-16T00:00:00.000Z');
+      await capture(page,'teacher-scheduled',size);
+      await page.getByRole('button',{name:'修改时间',exact:true}).click();
+      assert.equal(await page.getByLabel('开放时间（北京时间）').inputValue(),'2099-10-16T08:00');
+      await page.keyboard.press('Escape');
+      await page.getByRole('button',{name:'取消定时',exact:true}).click();
+      await page.getByRole('button',{name:'确认取消',exact:true}).click();
+      await page.getByRole('button',{name:'定时开放',exact:true}).waitFor();
+      assert.equal(f.quizzes.find(q=>q.id==='draft').scheduled_open_at,null);
+      const draftRow=page.locator('.quiz-table tbody tr').nth(1);
+      await draftRow.getByLabel('更多操作').click();
+      await draftRow.getByRole('button',{name:'定时开放',exact:true}).click();
+      await page.getByRole('dialog').waitFor();
+      await page.getByLabel('开放时间（北京时间）').fill('2099-10-17T09:00');
+      await page.keyboard.press('Escape');
       await page.locator('.quiz-table tbody tr').first().getByLabel('更多操作').click();
       await page.getByRole('button',{name:'重新开放测评',exact:true}).click();
       await focusTrap(page);

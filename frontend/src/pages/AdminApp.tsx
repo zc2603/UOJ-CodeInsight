@@ -5,6 +5,7 @@ import {
   RotateCcw, Search, ShieldCheck, Users, Trash2, Settings,
 } from "lucide-react";
 import { api } from "../api";
+import { ScheduleOpen, beijingTime } from "../components/ScheduleOpen";
 import { initialSettings, type TeacherSettings, type SettingsResponse } from "../teacherSettings";
 import { TeacherSettingsPanel } from "../components/TeacherSettingsPanel";
 import { ProblemStatement } from "../components/ProblemStatement";
@@ -780,7 +781,8 @@ export function AdminApp() {
               <div className="preparation-heading"><div><span className="eyebrow">课前准备</span><h2>{quiz.name}</h2></div><span className={`status-pill status-${p.ready ? "finished" : p.failed ? "grading-error" : "preparing"}`}>{p.ready ? "已就绪" : p.total === 0 ? "无有效提交" : p.cancelled && !p.running && !p.queued ? "已终止" : p.failed ? "部分出题失败" : "正在出题"}</span></div>
               <div className="preparation-counts"><div><strong>{p.completed}<small> / {p.total}</small></strong><span>已完成出题的有效题目</span></div><div><strong>{p.students_ready}<small> / {p.students_total}</small></strong><span>问题全部就绪的学生</span></div></div>
               <progress max={p.total || 1} value={p.completed} aria-label="已完成出题的有效题目" />
-              <div className="preparation-footer"><span>{p.ready ? `已准备 ${p.completed_questions} 个问题，可以开放测评。` : p.total === 0 ? "本场没有可用于出题的提交，请核对 Contest 后重新创建。" : `出题中 ${p.running} · 等待 ${p.queued} · 失败 ${p.failed} · 已终止 ${p.cancelled} · 已准备 ${p.completed_questions} 问`}</span><div className="inline-actions">{p.running + p.queued > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "stop")}>终止出题</button>}{p.failed + p.cancelled > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "retry")}>重试未完成题目</button>}{quiz.status.toUpperCase() === "DRAFT" && <button disabled={busy || (!p.ready && !(p.students_ready > 0 && p.failed + p.cancelled > 0))} onClick={() => preparationAction(quiz)}>开放测评</button>}</div></div>
+              {quiz.scheduled_open_at && <p className={quiz.scheduled_open_error ? "error" : "muted"}>{quiz.scheduled_open_error ? `定时开放失败：${quiz.scheduled_open_error}` : `待定时开放：${beijingTime(quiz.scheduled_open_at)}（北京时间）`}</p>}
+              <div className="preparation-footer"><span>{p.ready ? `已准备 ${p.completed_questions} 个问题，可以开放测评。` : p.total === 0 ? "本场没有可用于出题的提交，请核对 Contest 后重新创建。" : `出题中 ${p.running} · 等待 ${p.queued} · 失败 ${p.failed} · 已终止 ${p.cancelled} · 已准备 ${p.completed_questions} 问`}</span><div className="inline-actions">{p.running + p.queued > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "stop")}>终止出题</button>}{p.failed + p.cancelled > 0 && <button className="secondary" disabled={busy} onClick={() => preparationAction(quiz, "retry")}>重试未完成题目</button>}{quiz.status.toUpperCase() === "DRAFT" && <><ScheduleOpen quiz={quiz} disabled={busy} onSaved={refreshQuizzes} /><button disabled={busy || (!p.ready && !(p.students_ready > 0 && p.failed + p.cancelled > 0))} onClick={() => preparationAction(quiz)}>立即开放</button></>}</div></div>
             </section>;
           })}
 
@@ -793,10 +795,21 @@ export function AdminApp() {
                 return <tr key={quiz.id}>
                   <td><div className="quiz-name-cell"><span className={`status-dot dot-${statusClass(quiz.status)}`} /><div><strong>{quiz.name}</strong><small>{statusLabel(quiz.status)}</small></div></div></td>
                   <td className="mono">#{quiz.uoj_contest_id}</td>
-                  <td>{quiz.status.toUpperCase() === "DRAFT" ? `开放后 ${quiz.entry_minutes ?? 30} 分钟` : formatDate(quiz.end_time)}</td>
+                  <td>{quiz.scheduled_open_at ? <><div>{quiz.scheduled_open_error ? "定时开放失败" : "待定时开放"}</div><small>{beijingTime(quiz.scheduled_open_at)} 开放（北京时间）</small><div><small>截止：{beijingTime(new Date(new Date(quiz.scheduled_open_at).getTime() + (quiz.entry_minutes ?? 30) * 60000).toISOString())}</small></div></> : quiz.status.toUpperCase() === "DRAFT" ? `开放后 ${quiz.entry_minutes ?? 30} 分钟` : formatDate(quiz.end_time)}</td>
                   <td><div className="table-progress"><span><strong>{quiz.finished_count}</strong> / {quiz.participant_count}</span><i><b style={{ width: `${progress}%` }} /></i></div></td>
                   <td><strong>{quiz.average_score !== null ? `${quiz.average_score.toFixed(1)} 分` : "—"}</strong></td>
-                  <td className="actions-cell"><div className="actions"><button className="link primary-link" onClick={() => void showResults(quiz)}>查看结果</button><details className="action-menu" name="quiz-actions"><summary aria-label="更多操作"><MoreHorizontal size={18} /></summary><div onClick={event => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; }}><button onClick={() => void copyText(studentLink(quiz.id), "学生链接已复制")}><Copy size={15} />复制学生链接</button><button disabled={busy} onClick={() => regenerateCode(quiz)}><RefreshCw size={15} />生成备用码</button>{!quiz.scores_published && ["CLOSED", "ACTIVE"].includes(quiz.status.toUpperCase()) && <button disabled={busy} onClick={() => reopenQuiz(quiz)}><RotateCcw size={15} />重新开放测评</button>}<button className="delete-quiz" disabled={busy} onClick={() => deleteQuiz(quiz)}><Trash2 size={15} />删除此测评</button></div></details></div></td>
+                  <td className="actions-cell"><div className="actions">
+                    <button className="link primary-link" onClick={() => void showResults(quiz)}>查看结果</button>
+                    <details className="action-menu" name="quiz-actions"><summary aria-label="更多操作"><MoreHorizontal size={18} /></summary>
+                      <div onClick={event => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; }}>
+                        <button onClick={() => void copyText(studentLink(quiz.id), "学生链接已复制")}><Copy size={15} />复制学生链接</button>
+                        <button disabled={busy} onClick={() => regenerateCode(quiz)}><RefreshCw size={15} />生成备用码</button>
+                        {quiz.pre_generated && quiz.status.toUpperCase() === "DRAFT" && <ScheduleOpen quiz={quiz} disabled={busy} onSaved={refreshQuizzes} />}
+                        {!quiz.scores_published && ["CLOSED", "ACTIVE"].includes(quiz.status.toUpperCase()) && <button disabled={busy} onClick={() => reopenQuiz(quiz)}><RotateCcw size={15} />重新开放测评</button>}
+                        <button className="delete-quiz" disabled={busy} onClick={() => deleteQuiz(quiz)}><Trash2 size={15} />删除此测评</button>
+                      </div>
+                    </details>
+                  </div></td>
                 </tr>;
               })}</tbody>
             </table> : <div className="empty-state"><div className="empty-symbol"><ClipboardList size={27} /></div><h2>还没有测评</h2><p>创建第一场测评后，这里会显示学生进入、作答和评分进度。</p><button disabled={!settingsLoaded} onClick={beginCreate}><Plus size={16} />创建第一场测评</button></div>}

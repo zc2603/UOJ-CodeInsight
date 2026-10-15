@@ -15,6 +15,7 @@ from app.services.quality_audit import worker as quality_worker
 from app.integrations.uoj import UOJRepository, UOJSubmissionArchiveClient
 from app.services.import_service import ImportService
 from app.services.runtime_manager import RuntimeManager
+from app.services.scheduled_open import schedule_worker
 
 
 @asynccontextmanager
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
         app.state.uoj_repository = repository
         app.state.import_service = ImportService(settings, repository, archive_client)
     maintenance = asyncio.create_task(maintain_attempts(SessionLocal, settings))
+    scheduler = asyncio.create_task(schedule_worker(SessionLocal))
     graders = [asyncio.create_task(grading_worker(SessionLocal, settings, app.state.llm_provider, runtime))
         for _ in range(settings.grading_workers)]
     generators = [asyncio.create_task(generation_worker(SessionLocal, settings, app.state.llm_provider, runtime))
@@ -41,6 +43,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        scheduler.cancel()
+        await asyncio.gather(scheduler, return_exceptions=True)
         configuration_watch.cancel()
         await asyncio.gather(configuration_watch, return_exceptions=True)
         if quality is not None:

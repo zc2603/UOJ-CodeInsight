@@ -89,6 +89,8 @@ class Quiz(Base):
     question_mode: Mapped[str] = mapped_column(String(30), default="all_positive_2")
     assessment_version: Mapped[str] = mapped_column(String(30), default="legacy", server_default="legacy")
     entry_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    scheduled_open_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    scheduled_open_error: Mapped[str | None] = mapped_column(Text)
     reopen_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     grade_bands: Mapped[list | None] = mapped_column(JSON)
     appeal_window_days: Mapped[int | None] = mapped_column(Integer)

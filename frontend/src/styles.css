@@ -810,6 +810,7 @@ h1 { font-weight: 750; letter-spacing: -.035em; }
 .count-badge { display: inline-grid; place-items: center; min-width: 23px; height: 23px; padding-inline: 6px; border-radius: 7px; background: #edf2ef; color: var(--muted); font-size: 12px; }
 .count-badge.has-pending, .appeal-pending { background: #fff5df; color: #8b611b; border-color: #ebd5a6; }
 .appeals-summary { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.appeals-panel > .filter-tabs { margin-top: 16px; width: fit-content; flex-wrap: wrap; }
 .appeals-empty { display: flex; align-items: center; gap: 12px; margin-top: 18px; padding: 17px 20px; background: #f6f9f7; border: 1px dashed #d5e2da; border-radius: 10px; }
 .appeals-empty > span { color: #56856c; display: flex; }
 .appeals-empty strong { font-size: 13px; font-weight: 650; }

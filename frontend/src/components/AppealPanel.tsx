@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, CheckCheck, MessageSquareText, X } from "lucide-react";
 import { ProblemStatement } from "./ProblemStatement";
 
@@ -6,27 +6,37 @@ export interface AppealItem {
   id: string; attempt_id: string; question_id: string; state: string;
   reason: string; score_snapshot: number; question_snapshot: string;
   answer_snapshot: string; resolution: string | null; created_at?: string;
+  feedback_snapshot?: string | null;
 }
 
 export function AppealPanel({ appeals, studentFor, busy, onReview, onViewAttempt }: {
   appeals: AppealItem[]; studentFor: (attemptId: string) => string;
   busy: boolean; onReview: (appeal: AppealItem) => void; onViewAttempt: (id: string) => void;
 }) {
+  const [filter, setFilter] = useState<"pending" | "resolved" | "all">("pending");
   const pending = appeals.filter(appeal => appeal.state === "pending");
-  return <section className={`card appeals-panel ${pending.length ? "" : "appeals-panel-empty"}`} aria-labelledby="appeals-heading">
+  const resolvedCount = appeals.length - pending.length;
+  const visible = appeals.filter(appeal => filter === "all" || (filter === "pending" ? appeal.state === "pending" : appeal.state !== "pending"));
+  return <section className="card appeals-panel" aria-labelledby="appeals-heading">
     <div className="appeals-heading">
       <div className="section-title"><span className="section-icon"><MessageSquareText size={20} /></span>
         <div><h2 id="appeals-heading">学生申诉 <span className={`count-badge ${pending.length ? "has-pending" : ""}`}>{pending.length}</span></h2>
-          <p>{pending.length ? "查看学生的疑问，核对作答后给出处理结果。" : "学生对评分有疑问时，申请会显示在这里。"}</p></div></div>
-      <span className="appeals-summary">已处理 {appeals.length - pending.length} 条</span>
+          <p>处理学生疑问，或切换筛选回看历史申请与教师回复。</p></div></div>
+      <span className="appeals-summary">已处理 {resolvedCount} 条</span>
     </div>
-    {pending.length ? <div className="appeals-grid">{pending.map(appeal => <article className="appeal-item" key={appeal.id}>
-      <div className="appeal-item-heading"><strong className="mono">{studentFor(appeal.attempt_id)}</strong><span className="status-pill appeal-pending">待处理</span></div>
+    <div className="filter-tabs" role="group" aria-label="申诉状态筛选">
+      {([['pending', '待处理', pending.length], ['resolved', '已处理', resolvedCount], ['all', '全部', appeals.length]] as const).map(([value, label, count]) =>
+        <button type="button" key={value} className={filter === value ? "active" : ""} aria-pressed={filter === value}
+          onClick={() => setFilter(value)}>{label}（{count}）</button>)}
+    </div>
+    {visible.length ? <div className="appeals-grid">{visible.map(appeal => <article className="appeal-item" key={appeal.id}>
+      <div className="appeal-item-heading"><strong className="mono">{studentFor(appeal.attempt_id)}</strong><span className={`status-pill ${appeal.state === "pending" ? "appeal-pending" : "status-finished"}`}>{appeal.state === "pending" ? "待处理" : "已处理"}</span></div>
       <div className="appeal-meta"><span>申请时得分 <strong>{appeal.score_snapshot} / 2</strong></span>{appeal.created_at && <time dateTime={appeal.created_at}>{new Intl.DateTimeFormat("zh-CN", {month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false}).format(new Date(appeal.created_at))}</time>}</div>
       <p className="appeal-reason">{appeal.reason}</p>
-      <details className="appeal-context"><summary>查看题目与学生答案</summary><div><span className="field-caption">题目</span><ProblemStatement text={appeal.question_snapshot} /><span className="field-caption">学生答案</span><p className="preserve-text">{appeal.answer_snapshot || "未作答"}</p></div></details>
-      <div className="appeal-item-actions"><button className="link" disabled={busy} onClick={() => onViewAttempt(appeal.attempt_id)}>完整作答<ArrowUpRight size={14} /></button><button className="secondary" disabled={busy} onClick={() => onReview(appeal)}>处理申诉</button></div>
-    </article>)}</div> : <div className="appeals-empty"><span><CheckCheck size={23} /></span><div><strong>暂无待处理申诉</strong><p>目前没有需要回复的申请。</p></div></div>}
+      <details className="appeal-context"><summary>查看题目与学生答案</summary><div><span className="field-caption">申请时题目</span><ProblemStatement text={appeal.question_snapshot} /><span className="field-caption">申请时学生答案</span><p className="preserve-text">{appeal.answer_snapshot || "未作答"}</p>{appeal.feedback_snapshot && <><span className="field-caption">申请时评分反馈</span><p className="preserve-text">{appeal.feedback_snapshot}</p></>}</div></details>
+      {appeal.state !== "pending" && <div><span className="field-caption">教师处理说明</span><p className="preserve-text">{appeal.resolution || "暂无处理说明"}</p></div>}
+      <div className="appeal-item-actions"><button className="link" disabled={busy} onClick={() => onViewAttempt(appeal.attempt_id)}>完整作答<ArrowUpRight size={14} /></button>{appeal.state === "pending" && <button className="secondary" disabled={busy} onClick={() => onReview(appeal)}>处理申诉</button>}</div>
+    </article>)}</div> : <div className="appeals-empty"><span><CheckCheck size={23} /></span><div><strong>{filter === "pending" ? "暂无待处理申诉" : filter === "resolved" ? "暂无已处理申诉" : "暂无申诉记录"}</strong><p>{filter === "pending" && resolvedCount ? "可切换到“已处理”查看历史申请与回复。" : "当前筛选下没有申请。"}</p></div></div>}
   </section>;
 }
 

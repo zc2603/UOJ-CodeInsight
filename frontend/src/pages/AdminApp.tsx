@@ -879,7 +879,7 @@ export function AdminApp() {
             <div><BarChart3 size={18} /><span>平均原始分<strong>{(() => { const values = results.map(confirmedResultScore).filter((score): score is number => score !== null); return values.length ? `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)} 分` : "—"; })()}</strong></span></div>
             <div><CircleAlert size={18} /><span>需关注学生<strong>{results.filter(result => resultBucket(result) === "attention").length}</strong></span></div>
           </section>
-          <AppealPanel appeals={appeals} studentFor={studentForAttempt} busy={busy}
+          <AppealPanel key={selected.id} appeals={appeals} studentFor={studentForAttempt} busy={busy}
             onReview={appeal => { setResolvingAppeal(appeal.id); setAppealResolution(""); setAppealScore(""); setAppealError(""); }}
             onViewAttempt={id => void loadAttempt(id)} />
           <section className="card table-card result-card">

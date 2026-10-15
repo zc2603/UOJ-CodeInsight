@@ -131,7 +131,11 @@ async function wire(page,f,errors) {
       max_score:6,final_percent:i===3?null:i===2?0:100,confidence:.95,review_required:i===4,timed_out:false,prepared_problem_count:2,preparation_total:2}));
     else if(p.endsWith('/appeals')) data=[{id:'teacher-appeal',attempt_id:'attempt-1',question_id:'question-1',state:'pending',
       reason:'我用自己的话说明了更新作用，希望老师再核对一下。',score_snapshot:1,question_snapshot:f.questions[0].question,
-      answer_snapshot:'每次都把当前读入的数加上。',resolution:null,created_at:'2026-09-29T02:00:00Z'}];
+      answer_snapshot:'每次都把当前读入的数加上。',resolution:null,created_at:'2026-09-29T02:00:00Z'},
+      {id:'teacher-appeal-resolved',attempt_id:'attempt-2',question_id:'question-2',state:'resolved',
+        reason:'历史申请：请核对累加含义。',score_snapshot:1,question_snapshot:f.questions[0].question,
+        answer_snapshot:'历史答案：保存已经读入的总和。',feedback_snapshot:'历史评分反馈：解释不完整。',
+        resolution:'已核对原回答，认可其表达的核心理解。',created_at:'2026-09-28T02:00:00Z'}];
     else if(p.endsWith('/prepared-questions')) data={can_edit:true,student_number:'209900003',round_no:1,prepared_problem_count:2,preparation_total:2,questions:teacherQuestions(f)};
     else if(p.startsWith('/api/admin/attempts/')) data={id:'attempt-1',assessment_version:'lightweight_v1',student_number:'209900001',status:'FINISHED',completed_at:'2026-09-29T01:35:00Z',
       timed_out:false,review_required:false,auto_score:6,max_score:6,final_percent:100,manual_override_score:null,manual_override_reason:null,score_version:1,questions:teacherQuestions(f)};
@@ -341,6 +345,23 @@ async function focusTrap(page) {
       assert.deepEqual(await page.locator('.result-table .grade-score').allTextContents(),['B+','D','—','—','—']);
       assert.equal(await page.locator('.result-overview > div').nth(2).locator('strong').textContent(),'3.0 分');
       await capture(page,'teacher-results',size);
+      const appealFilters=page.getByRole('group',{name:'申诉状态筛选'});
+      assert.equal(await page.locator('.appeal-item').count(),1);
+      assert.equal(await page.getByText('历史申请：请核对累加含义。',{exact:true}).count(),0);
+      await appealFilters.getByRole('button',{name:'已处理（1）',exact:true}).click();
+      await page.getByText('已核对原回答，认可其表达的核心理解。',{exact:true}).waitFor();
+      assert.equal(await page.getByRole('button',{name:'处理申诉',exact:true}).count(),0);
+      await page.locator('.appeal-context summary').click();
+      await page.getByText('历史答案：保存已经读入的总和。',{exact:true}).waitFor();
+      await page.getByText('历史评分反馈：解释不完整。',{exact:true}).waitFor();
+      await capture(page,'teacher-appeal-history',size);
+      await page.getByRole('button',{name:'完整作答',exact:true}).click();
+      await page.getByRole('heading',{name:'逐题成绩',exact:true}).waitFor();
+      await page.getByRole('button',{name:'返回测评结果',exact:true}).click();
+      await appealFilters.getByRole('button',{name:'全部（2）',exact:true}).click();
+      assert.equal(await page.locator('.appeal-item').count(),2);
+      assert.equal(await page.getByRole('button',{name:'处理申诉',exact:true}).count(),1);
+      await appealFilters.getByRole('button',{name:'待处理（1）',exact:true}).click();
       await page.getByLabel('搜索学号').fill('209900001');assert.equal(await page.locator('.result-table tbody tr').count(),1);await page.getByLabel('搜索学号').fill('');
       await page.getByRole('button',{name:'处理申诉'}).click();await focusTrap(page);await capture(page,'teacher-appeal-dialog',size);await page.keyboard.press('Escape');
       await page.getByRole('button',{name:'完整作答'}).click();await page.getByRole('heading',{name:'逐题成绩',exact:true}).waitFor();
